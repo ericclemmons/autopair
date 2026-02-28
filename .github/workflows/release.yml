@@ -99,6 +99,11 @@ jobs:
             homepage \"https://github.com/ericclemmons/autopair\"
 
             app \"AutoPair.app\"
+
+            postflight do
+              system_command \"/usr/bin/xattr\",
+                             args: [\"-dr\", \"com.apple.quarantine\", \"#{appdir}/AutoPair.app\"]
+            end
           end
           '''.strip())
           " > Casks/autopair.rb
