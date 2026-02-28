@@ -1,12 +1,12 @@
-import SwiftUI
 import AppKit
 
 @main
-struct AutoPairApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-
-    var body: some Scene {
-        Settings { EmptyView() }
+enum AutoPairApp {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
     }
 }
 

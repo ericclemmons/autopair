@@ -23,19 +23,31 @@ Debug builds show an unfilled menu bar icon (`link.circle`) to distinguish from 
 bash build-app.sh release
 ```
 
-This builds with optimizations and strips the binary.
+Builds with optimizations and strips the binary.
 
 ## Releasing
 
-1. Tag a version: `git tag v1.x.x`
-2. Push the tag: `git push origin v1.x.x`
-3. GitHub Actions builds, creates a release with `AutoPair.zip`, and updates the Homebrew tap
+Just tag and push — CI handles the rest:
+
+```sh
+git tag v1.x.x
+git push origin v1.x.x
+```
+
+This triggers GitHub Actions which:
+
+1. Builds a release binary on `macos-14`
+2. Zips `AutoPair.app` and computes SHA256
+3. Creates a GitHub Release with the zip attached
+4. Pushes updated version + SHA256 to [`ericclemmons/homebrew-tap`](https://github.com/ericclemmons/homebrew-tap)
+
+Users get the update via `brew upgrade ericclemmons/tap/autopair`.
 
 ## Project structure
 
 ```
 Sources/AutoPair/
-  AutoPairApp.swift      # Menu bar UI
+  AutoPairApp.swift      # App entry point, NSStatusItem + NSMenu
   AppState.swift         # State management, monitor wiring
   BluetoothManager.swift # IOBluetooth device listing, connect/disconnect
   PowerMonitor.swift     # AC/battery power state changes
