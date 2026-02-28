@@ -12,11 +12,8 @@ When you plug into AC power or wake your Mac on AC, AutoPair connects your selec
 
 ```sh
 brew install --cask ericclemmons/tap/autopair
-xattr -rd com.apple.quarantine /Applications/AutoPair.app
 open /Applications/AutoPair.app
 ```
-
-The `xattr` step is needed once because the app is not signed. Alternatively, right-click the app and choose **Open** on first launch.
 
 ## Usage
 

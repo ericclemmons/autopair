@@ -14,8 +14,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="build.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          echo "$CERTIFICATE_P12" | base64 --decode > cert.p12
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import cert.p12 -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          rm cert.p12
+
       - name: Build release
+        env:
+          CODESIGN_IDENTITY: "Developer ID Application"
         run: bash build-app.sh release
+
+      - name: Notarize app
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          mkdir -p ~/.private_keys
+          echo "$NOTARY_KEY_P8" | base64 --decode > ~/.private_keys/AuthKey_${NOTARY_KEY_ID}.p8
+
+          zip -r AutoPair-notarize.zip AutoPair.app
+
+          xcrun notarytool submit AutoPair-notarize.zip \
+            --key ~/.private_keys/AuthKey_${NOTARY_KEY_ID}.p8 \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+
+          xcrun stapler staple AutoPair.app
+
+          spctl --assess --verbose AutoPair.app
+
+          rm AutoPair-notarize.zip
+          rm -rf ~/.private_keys
 
       - name: Zip app
         run: zip -r AutoPair.zip AutoPair.app
@@ -54,12 +99,6 @@ jobs:
             homepage \"https://github.com/ericclemmons/autopair\"
 
             app \"AutoPair.app\"
-
-            caveats <<~EOS
-              AutoPair is not signed. After installing, run:
-                xattr -rd com.apple.quarantine /Applications/AutoPair.app
-              Or right-click the app and choose Open on first launch.
-            EOS
           end
           '''.strip())
           " > Casks/autopair.rb
@@ -69,3 +108,7 @@ jobs:
           git add Casks/autopair.rb
           git commit -m "Update autopair to ${VERSION}"
           git push
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain build.keychain || true
