@@ -27,7 +27,7 @@ struct BluetoothDevice: Identifiable, Hashable {
             return "keyboard.fill"
         }
         if peripheralType == BluetoothDeviceClassMinor(kBluetoothDeviceClassMinorPeripheral1Pointing) {
-            if lowercaseName.contains("trackpad") { return "trackpad.fill" }
+            if lowercaseName.contains("trackpad") { return "hand.point.up.left.fill" }
             return "computermouse.fill"
         }
         if peripheralType == BluetoothDeviceClassMinor(kBluetoothDeviceClassMinorPeripheral1Combo) {
