@@ -30,7 +30,7 @@ struct AutoPairApp: App {
                         )) {
                             Label(
                                 device.name.isEmpty ? device.address : device.name,
-                                systemImage: device.statusIcon
+                                systemImage: device.deviceIcon
                             )
                         }
                     }

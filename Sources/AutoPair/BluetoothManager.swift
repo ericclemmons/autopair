@@ -6,11 +6,35 @@ struct BluetoothDevice: Identifiable, Hashable {
     let name: String
     let isConnected: Bool
     let majorClass: BluetoothDeviceClassMajor
+    let minorClass: BluetoothDeviceClassMinor
 
     var id: String { address }
 
-    var statusIcon: String {
-        isConnected ? "bluetooth" : "bluetooth.slash"
+    var deviceIcon: String {
+        let lowercaseName = name.lowercased()
+
+        // Audio devices — match by name for specifics, fall back to generic
+        if majorClass == BluetoothDeviceClassMajor(kBluetoothDeviceClassMajorAudio) {
+            if lowercaseName.contains("airpods pro") { return "airpodspro" }
+            if lowercaseName.contains("airpods max") { return "airpodsmax" }
+            if lowercaseName.contains("airpods") { return "airpods.gen3" }
+            return "headphones"
+        }
+
+        // Peripheral devices — use minor class bits 4-5 for type
+        let peripheralType = minorClass & 0x30
+        if peripheralType == BluetoothDeviceClassMinor(kBluetoothDeviceClassMinorPeripheral1Keyboard) {
+            return "keyboard.fill"
+        }
+        if peripheralType == BluetoothDeviceClassMinor(kBluetoothDeviceClassMinorPeripheral1Pointing) {
+            if lowercaseName.contains("trackpad") { return "trackpad.fill" }
+            return "computermouse.fill"
+        }
+        if peripheralType == BluetoothDeviceClassMinor(kBluetoothDeviceClassMinorPeripheral1Combo) {
+            return "keyboard.fill"
+        }
+
+        return "dot.radiowaves.left.and.right"
     }
 
     init(from device: IOBluetoothDevice) {
@@ -18,6 +42,7 @@ struct BluetoothDevice: Identifiable, Hashable {
         name = device.name ?? device.addressString ?? "Unknown"
         isConnected = device.isConnected()
         majorClass = device.deviceClassMajor
+        minorClass = device.deviceClassMinor
     }
 
     /// Only show devices relevant for auto-connect (peripherals + audio).
