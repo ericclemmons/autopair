@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release
+        run: bash build-app.sh release
+
+      - name: Zip app
+        run: zip -r AutoPair.zip AutoPair.app
+
+      - name: Compute SHA256
+        id: sha
+        run: echo "sha256=$(shasum -a 256 AutoPair.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" AutoPair.zip \
+            --title "${{ github.ref_name }}" \
+            --notes "SHA256: \`${{ steps.sha.outputs.sha256 }}\`"
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          SHA256="${{ steps.sha.outputs.sha256 }}"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/ericclemmons/homebrew-tap.git" tap
+          cd tap
+
+          python3 -c "
+          print('''cask \"autopair\" do
+            version \"${VERSION}\"
+            sha256 \"${SHA256}\"
+
+            url \"https://github.com/ericclemmons/autopair/releases/download/v#{version}/AutoPair.zip\"
+            name \"AutoPair\"
+            desc \"Automatically connect Bluetooth devices when plugged into power\"
+            homepage \"https://github.com/ericclemmons/autopair\"
+
+            app \"AutoPair.app\"
+
+            caveats <<~EOS
+              AutoPair is not signed. After installing, run:
+                xattr -rd com.apple.quarantine /Applications/AutoPair.app
+              Or right-click the app and choose Open on first launch.
+            EOS
+          end
+          '''.strip())
+          " > Casks/autopair.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/autopair.rb
+          git commit -m "Update autopair to ${VERSION}"
+          git push

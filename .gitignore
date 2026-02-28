@@ -1,0 +1,4 @@
+.build/
+AutoPair.app/
+.swiftpm/
+.DS_Store
