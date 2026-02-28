@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" width="128" height="128" alt="AutoPair icon">
+</p>
+
 # AutoPair
 
 macOS menu bar app that automatically connects and disconnects Bluetooth devices based on power state and sleep/wake events.
@@ -29,13 +33,7 @@ The `xattr` step is needed once because the app is not signed. Alternatively, ri
 
 ## Releasing
 
-Push a version tag and everything is automated:
-
-```sh
-git tag v1.x.x && git push origin v1.x.x
-```
-
-GitHub Actions builds a release `.zip`, creates a GitHub Release, and updates the [Homebrew tap](https://github.com/ericclemmons/homebrew-tap) — no manual steps.
+Every push to `main` auto-creates a **Release PR**. Merge it and CI handles the rest — tags, builds, GitHub Release, and [Homebrew tap](https://github.com/ericclemmons/homebrew-tap) update.
 
 ## Uninstall
 
