@@ -53,7 +53,6 @@ jobs:
             COMMITS=$(git log "${LAST_TAG}..HEAD" --oneline --no-merges)
           fi
 
-          # Exclude release merge commits
           COMMITS=$(echo "$COMMITS" | grep -v "release/v" | grep -v "^$" || true)
 
           if [ -z "$COMMITS" ]; then
@@ -74,22 +73,17 @@ jobs:
         if: steps.check.outputs.is_release == 'false' && steps.info.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.info.outputs.version }}
+          LAST_TAG: ${{ steps.info.outputs.last_tag }}
+          COMMITS: ${{ steps.info.outputs.commits }}
         run: |
-          VERSION="${{ steps.info.outputs.version }}"
-          LAST_TAG="${{ steps.info.outputs.last_tag }}"
           BRANCH="release/v${VERSION}"
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Close stale release PRs for older versions
-          for PR_NUM in $(gh pr list --label "release" --json number,headRefName --jq ".[] | select(.headRefName != \"${BRANCH}\") | .number"); do
-            gh pr close "$PR_NUM" --delete-branch 2>/dev/null || true
-          done
-
           git checkout -B "$BRANCH"
 
-          # Bump version in Info.plist
           python3 -c "
           import re
           version = '${VERSION}'
@@ -109,13 +103,15 @@ jobs:
           git diff --cached --quiet && echo "No version change needed" || git commit -m "bump version to ${VERSION}"
           git push -f origin "$BRANCH"
 
-          # Build PR body
-          BODY="## Changes since ${LAST_TAG}
+          BODY=$(cat <<PREOF
+          ## Changes since ${LAST_TAG}
 
-          ${{ steps.info.outputs.commits }}
+          ${COMMITS}
 
           ---
-          Merging this PR will release **v${VERSION}**."
+          Merging this PR will release **v${VERSION}**.
+          PREOF
+          )
 
           EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$EXISTING" ]; then
