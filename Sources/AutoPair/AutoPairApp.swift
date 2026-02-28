@@ -4,12 +4,20 @@ import SwiftUI
 struct AutoPairApp: App {
     @State private var appState = AppState()
 
+    private var isDebug: Bool {
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+    }
+
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
-        MenuBarExtra("AutoPair", systemImage: "link.circle.fill") {
+        MenuBarExtra("AutoPair", systemImage: isDebug ? "link.circle" : "link.circle.fill") {
             if appState.pairedDevices.isEmpty {
                 Text("No paired devices found")
             } else {
@@ -20,7 +28,10 @@ struct AutoPairApp: App {
                             get: { isSaved },
                             set: { _ in appState.toggleDevice(device.address) }
                         )) {
-                            Text("\(device.isConnected ? "🟢" : "⚪️") \(device.name.isEmpty ? device.address : device.name)")
+                            Label(
+                                device.name.isEmpty ? device.address : device.name,
+                                systemImage: device.statusIcon
+                            )
                         }
                     }
                 }

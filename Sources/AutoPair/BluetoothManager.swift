@@ -5,14 +5,27 @@ struct BluetoothDevice: Identifiable, Hashable {
     let address: String
     let name: String
     let isConnected: Bool
+    let majorClass: BluetoothDeviceClassMajor
 
     var id: String { address }
+
+    var statusIcon: String {
+        isConnected ? "bluetooth" : "bluetooth.slash"
+    }
 
     init(from device: IOBluetoothDevice) {
         address = device.addressString ?? "unknown"
         name = device.name ?? device.addressString ?? "Unknown"
         isConnected = device.isConnected()
+        majorClass = device.deviceClassMajor
     }
+
+    /// Only show devices relevant for auto-connect (peripherals + audio).
+    /// Filters out phones, watches, BLE-only services, etc.
+    static let supportedMajorClasses: Set<BluetoothDeviceClassMajor> = [
+        BluetoothDeviceClassMajor(kBluetoothDeviceClassMajorPeripheral),
+        BluetoothDeviceClassMajor(kBluetoothDeviceClassMajorAudio),
+    ]
 }
 
 final class BluetoothManager: NSObject {
@@ -32,7 +45,9 @@ final class BluetoothManager: NSObject {
             log.error("pairedDevices() returned nil")
             return []
         }
-        let result = devices.map { BluetoothDevice(from: $0) }
+        let result = devices
+            .filter { BluetoothDevice.supportedMajorClasses.contains($0.deviceClassMajor) }
+            .map { BluetoothDevice(from: $0) }
         log.info("pairedDevices: \(result.map { "\($0.name)(\($0.isConnected ? "on" : "off"))" }.joined(separator: ", "))")
         return result
     }
