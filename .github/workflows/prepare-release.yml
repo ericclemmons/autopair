@@ -30,12 +30,17 @@ jobs:
           fi
 
       # --- Release PR was merged: create tag ---
+      # Uses TAP_TOKEN (PAT) so the tag push triggers the Release workflow.
+      # GITHUB_TOKEN-created events don't trigger other workflows.
       - name: Tag release
         if: steps.check.outputs.is_release == 'true'
+        env:
+          TAG: v${{ steps.check.outputs.version }}
         run: |
-          git tag "v${{ steps.check.outputs.version }}"
-          git push origin "v${{ steps.check.outputs.version }}"
-          git push origin --delete "release/v${{ steps.check.outputs.version }}" || true
+          git tag "$TAG"
+          git remote set-url origin "https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/ericclemmons/autopair.git"
+          git push origin "$TAG"
+          git push origin --delete "release/$TAG" || true
 
       # --- Normal push: create/update release PR ---
       - name: Determine next version
