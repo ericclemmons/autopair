@@ -19,10 +19,7 @@ final class DisplayMonitor {
     }
 
     var currentDisplayName: String? {
-        NSScreen.screens.first(where: {
-            guard let id = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return false }
-            return CGDisplayIsBuiltin(id) == 0
-        })?.localizedName
+        firstExternalDisplayName()
     }
 
     @objc private func screensChanged() {
@@ -36,21 +33,29 @@ final class DisplayMonitor {
             onDisplayDisconnected?()
         }
         if !added.isEmpty {
-            let name = NSScreen.screens.first(where: {
-                guard let id = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return false }
-                return added.contains(id)
-            })?.localizedName ?? "External Display"
+            let name = firstExternalDisplayName() ?? "External Display"
             log.info("DisplayMonitor: external display connected: \(name)")
             onDisplayConnected?(name)
         }
     }
 
+    private func firstExternalDisplayName() -> String? {
+        NSScreen.screens.first { screen in
+            guard let id = displayID(for: screen) else { return false }
+            return CGDisplayIsBuiltin(id) == 0
+        }?.localizedName
+    }
+
     private func externalDisplayIDs() -> Set<CGDirectDisplayID> {
         Set(NSScreen.screens.compactMap { screen -> CGDirectDisplayID? in
-            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
-                  CGDisplayIsBuiltin(id) == 0 else { return nil }
+            guard let id = displayID(for: screen), CGDisplayIsBuiltin(id) == 0 else { return nil }
             return id
         })
+    }
+
+    private func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        guard let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+        return CGDirectDisplayID(num.uint32Value)
     }
 
     deinit {

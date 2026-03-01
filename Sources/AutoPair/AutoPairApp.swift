@@ -36,7 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         appState.refreshDevices()
 
-        let saved = appState.pairedDevices.filter { appState.isDeviceSaved($0.address) }
+        let saved = appState.menuSavedDevices
         let others = appState.pairedDevices.filter { !appState.isDeviceSaved($0.address) }
 
         // Header
