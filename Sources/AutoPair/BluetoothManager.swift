@@ -69,13 +69,8 @@ final class BluetoothManager: NSObject {
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [IOBluetoothUserNotification] = []
     // Keyed by address. Kept alive until pairing completes.
+    // Keyed by address. Kept alive until pairing completes or times out.
     private var pendingPairs: [String: (IOBluetoothDevicePair, PairingDelegate)] = [:]
-    // Background thread with a run loop so pair.start() doesn't block main thread.
-    private lazy var pairThread: PairThread = {
-        let t = PairThread()
-        t.start()
-        return t
-    }()
 
     override init() {
         super.init()
@@ -138,8 +133,8 @@ final class BluetoothManager: NSObject {
     }
 
     /// Pairs with the device at `address`, suppressing the system pairing dialog.
-    /// IOBluetoothDevicePair.start() can block the calling thread's run loop for up to 30s
-    /// if the device isn't immediately available — so we run it on a dedicated background thread.
+    /// Everything runs on the main thread (IOBluetooth is not thread-safe).
+    /// A 10s timeout cancels via pair.stop() and fires completion(false) as a fallback.
     func pair(_ address: String, completion: @escaping (Bool) -> Void) {
         guard let device = IOBluetoothDevice(addressString: address),
               let pair = IOBluetoothDevicePair(device: device) else {
@@ -148,17 +143,28 @@ final class BluetoothManager: NSObject {
             return
         }
         log.info("pair: starting \(device.name ?? address)")
-        let delegate = PairingDelegate(address: address) { [weak self] success in
-            // IOBluetooth delivers callbacks on the thread that ran start(); dispatch to main.
-            DispatchQueue.main.async {
-                self?.pendingPairs.removeValue(forKey: address)
-                completion(success)
-            }
+
+        var finished = false
+        let finish: (Bool) -> Void = { [weak self] success in
+            guard !finished else { return }
+            finished = true
+            self?.pendingPairs.removeValue(forKey: address)
+            completion(success)
         }
+
+        let delegate = PairingDelegate(address: address, completion: finish)
         pair.delegate = delegate
         pendingPairs[address] = (pair, delegate)
-        // call start() on background thread to avoid blocking main
-        pairThread.schedule { pair.start() }
+
+        // 10s timeout — stop() the pair attempt and fall through to connect() retry logic
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+            guard !finished else { return }
+            log.info("pair: timeout \(address), stopping")
+            pair.stop()
+            finish(false)
+        }
+
+        pair.start()
     }
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
@@ -179,26 +185,6 @@ final class BluetoothManager: NSObject {
     }
 }
 
-// MARK: - PairThread
-
-/// Background thread with a persistent run loop.
-/// IOBluetoothDevicePair.start() can spin its calling thread's run loop — this keeps it off main.
-private final class PairThread: Thread {
-    override func main() {
-        RunLoop.current.add(Port(), forMode: .default)
-        RunLoop.current.run()
-    }
-
-    func schedule(_ block: @escaping () -> Void) {
-        perform(#selector(_run(_:)), on: self, with: block as AnyObject,
-                waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue])
-    }
-
-    @objc private func _run(_ block: AnyObject) {
-        (block as! () -> Void)()
-    }
-}
-
 // MARK: - PairingDelegate
 
 private class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
@@ -212,8 +198,8 @@ private class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
 
     /// Auto-accept "Just Works" numeric confirmation (Magic Keyboard/Trackpad).
     /// This suppresses the system "Connection Request" dialog.
-    func devicePairingUserConfirmationRequest(_ sender: Any!, numericString: String!) {
-        log.info("pair: auto-confirming \(self.address)")
+    func devicePairingUserConfirmationRequest(_ sender: Any!, numericValue: BluetoothNumericValue) {
+        log.info("pair: auto-confirming \(self.address) numericValue=\(numericValue)")
         (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
     }
 
