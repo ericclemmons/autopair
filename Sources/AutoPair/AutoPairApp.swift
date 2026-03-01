@@ -111,33 +111,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Device Icon Rendering
 
     private func makeDeviceIcon(symbolName: String, isConnected: Bool) -> NSImage {
-        let size: CGFloat = 22
+        let size: CGFloat = 26
+        let symbolPt: CGFloat = 14
         let result = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             // Full circle — blue (connected) or gray (disconnected), matches Bluetooth panel
             let bgColor: NSColor = isConnected ? .controlAccentColor : NSColor(white: 0.55, alpha: 1.0)
             bgColor.setFill()
             NSBezierPath(ovalIn: rect).fill()
 
-            // White SF Symbol centered in circle
-            if let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold)) {
+            // White SF Symbol — render at fixed point size, draw centered in circle
+            guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: symbolPt, weight: .semibold)) else { return true }
 
-                let tinted = NSImage(size: symbol.size, flipped: false) { symRect in
-                    symbol.draw(in: symRect)
-                    NSColor.white.setFill()
-                    symRect.fill(using: .sourceAtop)
-                    return true
-                }
-                tinted.isTemplate = false
-
-                let x = (rect.width - tinted.size.width) / 2
-                let y = (rect.height - tinted.size.height) / 2
-                tinted.draw(
-                    in: NSRect(x: x, y: y, width: tinted.size.width, height: tinted.size.height),
-                    from: .zero, operation: .sourceOver, fraction: 1.0
-                )
+            // Tint white by compositing over a white fill
+            let tinted = NSImage(size: symbol.size, flipped: false) { symRect in
+                symbol.draw(in: symRect)
+                NSColor.white.setFill()
+                symRect.fill(using: .sourceAtop)
+                return true
             }
+            tinted.isTemplate = false
 
+            let x = ((rect.width - tinted.size.width) / 2).rounded()
+            let y = ((rect.height - tinted.size.height) / 2).rounded()
+            tinted.draw(in: NSRect(x: x, y: y, width: tinted.size.width, height: tinted.size.height),
+                        from: .zero, operation: .sourceOver, fraction: 1.0)
             return true
         }
         result.isTemplate = false
@@ -156,7 +154,7 @@ private final class DeviceMenuItemView: NSView {
         self.address = address
         self.deviceName = name
         self.iconImage = icon
-        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 30))
+        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 36))
         autoresizingMask = .width
     }
 
@@ -164,13 +162,13 @@ private final class DeviceMenuItemView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         if enclosingMenuItem?.isHighlighted == true {
-            let hoverRect = bounds.insetBy(dx: 6, dy: 2)
+            let hoverRect = bounds.insetBy(dx: 6, dy: 3)
             NSColor(white: 0.0, alpha: 0.1).setFill()
             NSBezierPath(roundedRect: hoverRect, xRadius: 5, yRadius: 5).fill()
         }
 
-        let iconSize: CGFloat = 22
-        let iconX: CGFloat = 14
+        let iconSize: CGFloat = 26
+        let iconX: CGFloat = 16
         let iconY = (bounds.height - iconSize) / 2
         iconImage.draw(in: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
 
@@ -179,7 +177,7 @@ private final class DeviceMenuItemView: NSView {
             .foregroundColor: NSColor.labelColor,
         ]
         let str = NSAttributedString(string: deviceName, attributes: attrs)
-        let textX = iconX + iconSize + 7
+        let textX = iconX + iconSize + 8
         let textY = (bounds.height - str.size().height) / 2
         str.draw(at: NSPoint(x: textX, y: textY))
     }
