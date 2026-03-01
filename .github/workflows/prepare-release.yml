@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   release:
@@ -22,31 +21,18 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.TAP_TOKEN }}
 
-      - name: Check if this is a release PR merge
+      - name: Skip version bump commits
         id: check
         run: |
           MSG=$(git log -1 --pretty=%s)
-          if echo "$MSG" | grep -q "release/v"; then
-            VERSION=$(echo "$MSG" | grep -o 'release/v[0-9]*\.[0-9]*\.[0-9]*' | head -1 | sed 's|release/v||')
-            echo "is_release=true" >> $GITHUB_OUTPUT
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if echo "$MSG" | grep -qE "^bump version to"; then
+            echo "skip=true" >> $GITHUB_OUTPUT
           else
-            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
-      # --- Release PR was merged: create tag ---
-      - name: Tag release
-        if: steps.check.outputs.is_release == 'true'
-        env:
-          TAG: v${{ steps.check.outputs.version }}
-        run: |
-          git tag "$TAG"
-          git push origin "$TAG"
-          git push origin --delete "release/$TAG" || true
-
-      # --- Normal push: create/update release PR ---
       - name: Determine next version
-        if: steps.check.outputs.is_release == 'false'
+        if: steps.check.outputs.skip == 'false'
         id: info
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
@@ -54,13 +40,7 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
           NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
 
-          if [ "$LAST_TAG" = "v0.0.0" ]; then
-            COMMITS=$(git log --oneline --no-merges)
-          else
-            COMMITS=$(git log "${LAST_TAG}..HEAD" --oneline --no-merges)
-          fi
-
-          COMMITS=$(echo "$COMMITS" | grep -v "release/v" | grep -v "^$" || true)
+          COMMITS=$(git log "${LAST_TAG}..HEAD" --oneline --no-merges | grep -v "^$" || true)
 
           if [ -z "$COMMITS" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
@@ -69,27 +49,14 @@ jobs:
 
           echo "skip=false" >> $GITHUB_OUTPUT
           echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
-          {
-            echo 'commits<<EOF'
-            echo "$COMMITS"
-            echo 'EOF'
-          } >> $GITHUB_OUTPUT
 
-      - name: Create or update release PR
-        if: steps.check.outputs.is_release == 'false' && steps.info.outputs.skip != 'true'
+      - name: Bump version, commit, and tag
+        if: steps.check.outputs.skip == 'false' && steps.info.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.info.outputs.version }}
-          LAST_TAG: ${{ steps.info.outputs.last_tag }}
-          COMMITS: ${{ steps.info.outputs.commits }}
         run: |
-          BRANCH="release/v${VERSION}"
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git checkout -B "$BRANCH"
 
           python3 -c "
           import re
@@ -107,28 +74,8 @@ jobs:
           "
 
           git add Info.plist
-          git diff --cached --quiet && echo "No version change needed" || git commit -m "bump version to ${VERSION}"
-          git push -f origin "$BRANCH"
+          git diff --cached --quiet || git commit -m "bump version to ${VERSION}"
 
-          BODY=$(cat <<PREOF
-          ## Changes since ${LAST_TAG}
-
-          ${COMMITS}
-
-          ---
-          Merging this PR will release **v${VERSION}**.
-          PREOF
-          )
-
-          EXISTING=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
-          if [ -n "$EXISTING" ]; then
-            gh pr edit "$EXISTING" --title "Release v${VERSION}" --body "$BODY"
-            echo "Updated PR #${EXISTING}"
-          else
-            gh pr create \
-              --title "Release v${VERSION}" \
-              --body "$BODY" \
-              --head "$BRANCH" \
-              --base main \
-              --label "release"
-          fi
+          git tag "v${VERSION}"
+          git push origin main
+          git push origin "v${VERSION}"
