@@ -23,6 +23,12 @@ cp Info.plist "$APP/Contents/Info.plist"
 
 mkdir -p "$APP/Contents/Resources"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp /opt/homebrew/bin/blueutil "$APP/Contents/Resources/blueutil"
+# Sign blueutil with the same Bluetooth entitlement so it works as a subprocess
+codesign --force --options runtime \
+  --entitlements AutoPair.entitlements \
+  --sign - \
+  "$APP/Contents/Resources/blueutil"
 
 if [[ -n "$CODESIGN_IDENTITY" ]]; then
   codesign --force --options runtime \

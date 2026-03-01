@@ -93,33 +93,18 @@ final class AppState {
             log.info("→ Display connected: \(name)")
             self?.displayName = name
             UserDefaults.standard.set(name, forKey: "AutoPairDisplayName")
-            let addresses = self?.savedAddresses ?? []
-            // Start pairing quickly (0.5s) to register IOBluetoothDevicePair sessions
-            // before the device sends its own connection request — this suppresses the
-            // system "Connection Request" dialog and handles confirmation automatically.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                log.info("AppState: pairAndConnectSaved (\(addresses.count) devices)")
-                for address in addresses {
-                    self?.bluetooth.pair(address) { [weak self] success in
-                        log.info("AppState: pair \(address) success=\(success), connecting...")
-                        self?.bluetooth.connect(address)
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { self?.refreshDevices() }
+            let addresses = Array(self?.savedAddresses ?? [])
+            log.info("AppState: powerCycleThenPairAndConnect (\(addresses.count) devices)")
+            self?.bluetooth.powerCycleThenPairAndConnect(addresses) { [weak self] in
+                self?.refreshDevices()
             }
         }
 
         displayMonitor.onDisplayDisconnected = { [weak self] in
             log.info("→ Display disconnected")
-            self?.displayName = ""
-            let addresses = self?.savedAddresses ?? []
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                log.info("AppState: disconnectAndUnpairSaved (\(addresses.count) devices)")
-                for address in addresses {
-                    self?.bluetooth.disconnect(address)
-                    self?.bluetooth.unpair(address)
-                }
-                DispatchQueue.main.async { self?.refreshDevices() }
+            let addresses = Array(self?.savedAddresses ?? [])
+            self?.bluetooth.unpairAll(addresses) { [weak self] in
+                self?.refreshDevices()
             }
         }
     }

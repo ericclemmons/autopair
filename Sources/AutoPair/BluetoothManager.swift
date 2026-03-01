@@ -37,14 +37,6 @@ struct BluetoothDevice: Identifiable, Hashable {
         return "dot.radiowaves.left.and.right"
     }
 
-    init(from device: IOBluetoothDevice) {
-        address = device.addressString ?? "unknown"
-        name = device.name ?? device.addressString ?? "Unknown"
-        isConnected = device.isConnected()
-        majorClass = device.deviceClassMajor
-        minorClass = device.deviceClassMinor
-    }
-
     /// Used to display saved devices that are no longer paired (e.g. after unpairing on disconnect).
     init(address: String, name: String, isConnected: Bool = false,
          majorClass: BluetoothDeviceClassMajor, minorClass: BluetoothDeviceClassMinor) {
@@ -68,21 +60,31 @@ final class BluetoothManager: NSObject {
 
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [IOBluetoothUserNotification] = []
-    // Keyed by address. Kept alive until pairing completes.
-    // Keyed by address. Kept alive until pairing completes or times out.
-    private var pendingPairs: [String: (IOBluetoothDevicePair, PairingDelegate)] = [:]
-    // Background thread with its own run loop. pair.start() can block the calling
-    // thread's run loop for up to 30s — running it here keeps main thread responsive.
-    private lazy var pairThread: PairThread = {
-        let t = PairThread()
-        t.start()
-        return t
-    }()
+    // Tracks connection state via IOBluetooth notifications + blueutil checks.
+    // IOBluetoothDevice.isConnected() is unreliable for BLE (e.g. Magic Trackpad 2).
+    private var connectedAddresses: Set<String> = []
 
     override init() {
         super.init()
+        // Seed from IOBluetooth (classic BT)
+        if let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] {
+            connectedAddresses = Set(devices.compactMap { $0.isConnected() ? $0.addressString : nil })
+        }
         connectNotification = IOBluetoothDevice.register(forConnectNotifications: self, selector: #selector(deviceConnected(_:device:)))
-        log.info("BluetoothManager initialized")
+        log.info("BluetoothManager initialized, connected=\(self.connectedAddresses)")
+
+        // Async re-check via blueutil — covers BLE devices missed by isConnected()
+        let allAddresses = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice])?.compactMap { $0.addressString } ?? []
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let connected = Set(allAddresses.filter { Blueutil.isConnected($0) })
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard connected != self.connectedAddresses else { return }
+                log.info("BluetoothManager: blueutil seed updated connected=\(connected)")
+                self.connectedAddresses = connected
+                self.onConnectionChanged?()
+            }
+        }
     }
 
     func pairedDevices() -> [BluetoothDevice] {
@@ -92,154 +94,84 @@ final class BluetoothManager: NSObject {
         }
         let result = devices
             .filter { BluetoothDevice.supportedMajorClasses.contains($0.deviceClassMajor) }
-            .map { BluetoothDevice(from: $0) }
+            .map { device -> BluetoothDevice in
+                let addr = device.addressString ?? ""
+                let isConnected = device.isConnected() || connectedAddresses.contains(addr)
+                return BluetoothDevice(address: addr,
+                                       name: device.name ?? addr,
+                                       isConnected: isConnected,
+                                       majorClass: device.deviceClassMajor,
+                                       minorClass: device.deviceClassMinor)
+            }
         log.info("pairedDevices: \(result.map { "\($0.name)(\($0.isConnected ? "on" : "off"))" }.joined(separator: ", "))")
         return result
     }
 
-    func connect(_ address: String, attempts: Int = 5, delay: Double = 2.0) {
-        guard let device = IOBluetoothDevice(addressString: address) else {
-            log.error("connect: device not found \(address)")
-            return
-        }
-        if device.isConnected() {
-            log.info("connect: \(device.name ?? address) already connected")
-            return
-        }
-        log.info("connect: \(device.name ?? address) (attempt \(6 - attempts)/5)")
-        let result = device.openConnection()
-        if result == kIOReturnSuccess { return }
-        guard attempts > 1 else {
-            log.error("connect: \(device.name ?? address) failed after all attempts")
-            return
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.connect(address, attempts: attempts - 1, delay: min(delay * 1.5, 10))
+    /// Unpair all addresses sequentially on a single background thread.
+    /// --unpair implicitly disconnects.
+    func unpairAll(_ addresses: [String], completion: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            for address in addresses {
+                Blueutil.run(["--unpair", address])
+            }
+            DispatchQueue.main.async { completion() }
         }
     }
 
-    func disconnect(_ address: String) {
-        guard let device = IOBluetoothDevice(addressString: address) else {
-            log.error("disconnect: device not found \(address)")
-            return
-        }
-        log.info("disconnect: \(device.name ?? address)")
-        let result = device.closeConnection()
-        if result != kIOReturnSuccess {
-            log.error("disconnect failed \(address): \(result)")
-        }
-    }
+    /// Power-cycle Bluetooth, pair via blueutil, connect via IOBluetooth.
+    func powerCycleThenPairAndConnect(_ addresses: [String], completion: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            // Power cycle clears stale pairing cache so devices are discoverable
+            Blueutil.run(["--power", "0"])
+            Thread.sleep(forTimeInterval: 2.0)
+            Blueutil.run(["--power", "1"])
+            Thread.sleep(forTimeInterval: 3.0)
 
-    func unpair(_ address: String) {
-        guard let device = IOBluetoothDevice(addressString: address) else {
-            log.error("unpair: device not found \(address)")
-            return
-        }
-        log.info("unpair: \(device.name ?? address)")
-        device.perform(Selector(("remove")))
-    }
+            // Pair each device via blueutil (handles pairing dialog suppression)
+            for address in addresses {
+                for attempt in 1...3 {
+                    if Blueutil.run(["--pair", address]) == 0 { break }
+                    if attempt < 3 {
+                        Thread.sleep(forTimeInterval: Double(attempt) * 2.0)
+                    }
+                }
+            }
 
-    /// Pairs with the device at `address`, suppressing the system pairing dialog.
-    /// IOBluetooth objects are created on the calling (main) thread.
-    /// pair.start() runs on pairThread to avoid blocking main.
-    /// Callbacks dispatch back to main. 10s timeout stops the attempt via pairThread.
-    func pair(_ address: String, completion: @escaping (Bool) -> Void) {
-        guard let device = IOBluetoothDevice(addressString: address),
-              let pair = IOBluetoothDevicePair(device: device) else {
-            log.error("pair: setup failed \(address)")
-            completion(false)
-            return
+            // Connect via IOBluetooth (native API, works with BLE HID)
+            Thread.sleep(forTimeInterval: 2.0)
+            for address in addresses {
+                guard let device = IOBluetoothDevice(addressString: address) else { continue }
+                if device.isConnected() { continue }
+                for attempt in 1...5 {
+                    let result = device.openConnection()
+                    if result == kIOReturnSuccess { break }
+                    if attempt < 5 {
+                        Thread.sleep(forTimeInterval: Double(attempt))
+                    }
+                }
+            }
+            DispatchQueue.main.async { completion() }
         }
-        log.info("pair: starting \(device.name ?? address)")
-
-        // finished is only ever read/written on main thread
-        var finished = false
-        let finish: (Bool) -> Void = { [weak self] success in
-            guard !finished else { return }
-            finished = true
-            self?.pendingPairs.removeValue(forKey: address)
-            completion(success)
-        }
-
-        let delegate = PairingDelegate(address: address) { success in
-            DispatchQueue.main.async { finish(success) }
-        }
-        pair.delegate = delegate
-        pendingPairs[address] = (pair, delegate)
-
-        // 10s timeout on main; stop() on pairThread (same thread as start())
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
-            guard !finished else { return }
-            log.info("pair: timeout \(address)")
-            self?.pairThread.schedule { pair.stop() }
-            finish(false)
-        }
-
-        // start() on pairThread — may block that thread's run loop, not main
-        pairThread.schedule { pair.start() }
     }
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        log.info("BT event: connected \(device.name ?? "unknown")")
+        let addr = device.addressString ?? ""
+        log.info("BT event: connected \(device.name ?? "unknown") (\(addr))")
+        connectedAddresses.insert(addr)
         let disconnectNote = device.register(forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
         if let disconnectNote { disconnectNotifications.append(disconnectNote) }
         onConnectionChanged?()
     }
 
     @objc private func deviceDisconnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
-        log.info("BT event: disconnected \(device.name ?? "unknown")")
+        let addr = device.addressString ?? ""
+        log.info("BT event: disconnected \(device.name ?? "unknown") (\(addr))")
+        connectedAddresses.remove(addr)
         onConnectionChanged?()
     }
 
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.forEach { $0.unregister() }
-    }
-}
-
-// MARK: - PairThread
-
-private final class PairThread: Thread {
-    override func main() {
-        RunLoop.current.add(Port(), forMode: .default)
-        RunLoop.current.run()
-    }
-
-    func schedule(_ block: @escaping () -> Void) {
-        perform(#selector(_run(_:)), on: self, with: block as AnyObject,
-                waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue])
-    }
-
-    @objc private func _run(_ block: AnyObject) {
-        (block as! () -> Void)()
-    }
-}
-
-// MARK: - PairingDelegate
-
-private class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
-    let address: String
-    let completion: (Bool) -> Void
-
-    init(address: String, completion: @escaping (Bool) -> Void) {
-        self.address = address
-        self.completion = completion
-    }
-
-    /// Auto-accept "Just Works" numeric confirmation (Magic Keyboard/Trackpad).
-    /// This suppresses the system "Connection Request" dialog.
-    func devicePairingUserConfirmationRequest(_ sender: Any!, numericValue: BluetoothNumericValue) {
-        log.info("pair: auto-confirming \(self.address) numericValue=\(numericValue)")
-        (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
-    }
-
-    func devicePairingConnecting(_ sender: Any!) {
-        log.info("pair: connecting \(self.address)")
-    }
-
-    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
-        let success = error == kIOReturnSuccess
-        log.info("pair: finished \(self.address) success=\(success) error=\(error)")
-        completion(success)
     }
 }
