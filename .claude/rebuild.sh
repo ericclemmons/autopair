@@ -12,13 +12,7 @@ fi
 cd "$(dirname "$0")/.."
 
 echo "→ Rebuilding AutoPair..."
-pkill -x AutoPair 2>/dev/null || true
-
-if bash build-app.sh debug 2>&1; then
-  codesign --force --options runtime \
-    --entitlements AutoPair.entitlements \
-    --sign - AutoPair.app 2>/dev/null
-  open AutoPair.app
+if make run 2>&1; then
   echo "✓ AutoPair relaunched"
 else
   echo "✗ Build failed"

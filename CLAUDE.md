@@ -7,17 +7,11 @@ Always commit after completing a task, without asking for confirmation.
 ## Build & Run
 
 ```bash
-# Build debug and launch (used during development)
-bash build-app.sh
-open AutoPair.app
+make run      # build, sign, kill existing, relaunch
+make build    # build only
 
-# Build release (CI only — requires CODESIGN_IDENTITY env var)
+# Release builds (CI only — requires CODESIGN_IDENTITY env var)
 bash build-app.sh release
-```
-
-After building debug, ad-hoc sign for Bluetooth entitlement on macOS Sequoia:
-```bash
-codesign --force --options runtime --entitlements AutoPair.entitlements --sign - AutoPair.app
 ```
 
 There are no tests. The app is verified manually by running it.
