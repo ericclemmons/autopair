@@ -68,6 +68,14 @@ final class BluetoothManager: NSObject {
 
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [IOBluetoothUserNotification] = []
+    // Keyed by address. Kept alive until pairing completes.
+    private var pendingPairs: [String: (IOBluetoothDevicePair, PairingDelegate)] = [:]
+    // Background thread with a run loop so pair.start() doesn't block main thread.
+    private lazy var pairThread: PairThread = {
+        let t = PairThread()
+        t.start()
+        return t
+    }()
 
     override init() {
         super.init()
@@ -129,6 +137,30 @@ final class BluetoothManager: NSObject {
         device.perform(Selector(("remove")))
     }
 
+    /// Pairs with the device at `address`, suppressing the system pairing dialog.
+    /// IOBluetoothDevicePair.start() can block the calling thread's run loop for up to 30s
+    /// if the device isn't immediately available — so we run it on a dedicated background thread.
+    func pair(_ address: String, completion: @escaping (Bool) -> Void) {
+        guard let device = IOBluetoothDevice(addressString: address),
+              let pair = IOBluetoothDevicePair(device: device) else {
+            log.error("pair: setup failed \(address)")
+            completion(false)
+            return
+        }
+        log.info("pair: starting \(device.name ?? address)")
+        let delegate = PairingDelegate(address: address) { [weak self] success in
+            // IOBluetooth delivers callbacks on the thread that ran start(); dispatch to main.
+            DispatchQueue.main.async {
+                self?.pendingPairs.removeValue(forKey: address)
+                completion(success)
+            }
+        }
+        pair.delegate = delegate
+        pendingPairs[address] = (pair, delegate)
+        // call start() on background thread to avoid blocking main
+        pairThread.schedule { pair.start() }
+    }
+
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         log.info("BT event: connected \(device.name ?? "unknown")")
         let disconnectNote = device.register(forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
@@ -144,5 +176,54 @@ final class BluetoothManager: NSObject {
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.forEach { $0.unregister() }
+    }
+}
+
+// MARK: - PairThread
+
+/// Background thread with a persistent run loop.
+/// IOBluetoothDevicePair.start() can spin its calling thread's run loop — this keeps it off main.
+private final class PairThread: Thread {
+    override func main() {
+        RunLoop.current.add(Port(), forMode: .default)
+        RunLoop.current.run()
+    }
+
+    func schedule(_ block: @escaping () -> Void) {
+        perform(#selector(_run(_:)), on: self, with: block as AnyObject,
+                waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue])
+    }
+
+    @objc private func _run(_ block: AnyObject) {
+        (block as! () -> Void)()
+    }
+}
+
+// MARK: - PairingDelegate
+
+private class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
+    let address: String
+    let completion: (Bool) -> Void
+
+    init(address: String, completion: @escaping (Bool) -> Void) {
+        self.address = address
+        self.completion = completion
+    }
+
+    /// Auto-accept "Just Works" numeric confirmation (Magic Keyboard/Trackpad).
+    /// This suppresses the system "Connection Request" dialog.
+    func devicePairingUserConfirmationRequest(_ sender: Any!, numericString: String!) {
+        log.info("pair: auto-confirming \(self.address)")
+        (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
+    }
+
+    func devicePairingConnecting(_ sender: Any!) {
+        log.info("pair: connecting \(self.address)")
+    }
+
+    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
+        let success = error == kIOReturnSuccess
+        log.info("pair: finished \(self.address) success=\(success) error=\(error)")
+        completion(success)
     }
 }

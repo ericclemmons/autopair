@@ -36,6 +36,7 @@ final class AppState {
 
     private let savedKey = "AutoPairSavedDevices"
     private let savedInfoKey = "AutoPairSavedDeviceInfo"
+    private let displayNameKey = "AutoPairDisplayName"
     private var savedDeviceInfo: [String: SavedDeviceInfo] = [:]
     private var refreshWorkItem: DispatchWorkItem?
 
@@ -43,7 +44,10 @@ final class AppState {
         loadSaved()
         setupMonitors()
         refreshDevices()
-        displayName = displayMonitor.currentDisplayName ?? ""
+        // Prefer live display name; fall back to last known (persisted) name
+        displayName = displayMonitor.currentDisplayName
+            ?? UserDefaults.standard.string(forKey: displayNameKey)
+            ?? ""
         log.info("AppState: init, saved=\(self.savedAddresses.joined(separator: ", ")), display=\(self.displayName)")
     }
 
@@ -86,23 +90,27 @@ final class AppState {
 
         displayMonitor.onDisplayConnected = { [weak self] name in
             log.info("→ Display connected: \(name)")
-            DispatchQueue.main.async { self?.displayName = name }
-            // Delay lets unpaired devices enter pairing mode before we attempt openConnection().
-            // openConnection() on an unpaired-but-advertising device triggers automatic re-pairing
-            // (Just Works) without needing IOBluetoothDevicePair.
+            self?.displayName = name
+            UserDefaults.standard.set(name, forKey: "AutoPairDisplayName")
             let addresses = self?.savedAddresses ?? []
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                log.info("AppState: connectSaved (\(addresses.count) devices)")
+            // Start pairing quickly (0.5s) to register IOBluetoothDevicePair sessions
+            // before the device sends its own connection request — this suppresses the
+            // system "Connection Request" dialog and handles confirmation automatically.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                log.info("AppState: pairAndConnectSaved (\(addresses.count) devices)")
                 for address in addresses {
-                    self?.bluetooth.connect(address)
+                    self?.bluetooth.pair(address) { [weak self] success in
+                        log.info("AppState: pair \(address) success=\(success), connecting...")
+                        self?.bluetooth.connect(address)
+                    }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self?.refreshDevices() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { self?.refreshDevices() }
             }
         }
 
         displayMonitor.onDisplayDisconnected = { [weak self] in
             log.info("→ Display disconnected")
-            DispatchQueue.main.async { self?.displayName = "" }
+            self?.displayName = ""
             let addresses = self?.savedAddresses ?? []
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 log.info("AppState: disconnectAndUnpairSaved (\(addresses.count) devices)")
