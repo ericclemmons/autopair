@@ -71,6 +71,13 @@ final class BluetoothManager: NSObject {
     // Keyed by address. Kept alive until pairing completes.
     // Keyed by address. Kept alive until pairing completes or times out.
     private var pendingPairs: [String: (IOBluetoothDevicePair, PairingDelegate)] = [:]
+    // Background thread with its own run loop. pair.start() can block the calling
+    // thread's run loop for up to 30s — running it here keeps main thread responsive.
+    private lazy var pairThread: PairThread = {
+        let t = PairThread()
+        t.start()
+        return t
+    }()
 
     override init() {
         super.init()
@@ -133,8 +140,9 @@ final class BluetoothManager: NSObject {
     }
 
     /// Pairs with the device at `address`, suppressing the system pairing dialog.
-    /// Everything runs on the main thread (IOBluetooth is not thread-safe).
-    /// A 10s timeout cancels via pair.stop() and fires completion(false) as a fallback.
+    /// IOBluetooth objects are created on the calling (main) thread.
+    /// pair.start() runs on pairThread to avoid blocking main.
+    /// Callbacks dispatch back to main. 10s timeout stops the attempt via pairThread.
     func pair(_ address: String, completion: @escaping (Bool) -> Void) {
         guard let device = IOBluetoothDevice(addressString: address),
               let pair = IOBluetoothDevicePair(device: device) else {
@@ -144,6 +152,7 @@ final class BluetoothManager: NSObject {
         }
         log.info("pair: starting \(device.name ?? address)")
 
+        // finished is only ever read/written on main thread
         var finished = false
         let finish: (Bool) -> Void = { [weak self] success in
             guard !finished else { return }
@@ -152,19 +161,22 @@ final class BluetoothManager: NSObject {
             completion(success)
         }
 
-        let delegate = PairingDelegate(address: address, completion: finish)
+        let delegate = PairingDelegate(address: address) { success in
+            DispatchQueue.main.async { finish(success) }
+        }
         pair.delegate = delegate
         pendingPairs[address] = (pair, delegate)
 
-        // 10s timeout — stop() the pair attempt and fall through to connect() retry logic
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
+        // 10s timeout on main; stop() on pairThread (same thread as start())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { [weak self] in
             guard !finished else { return }
-            log.info("pair: timeout \(address), stopping")
-            pair.stop()
+            log.info("pair: timeout \(address)")
+            self?.pairThread.schedule { pair.stop() }
             finish(false)
         }
 
-        pair.start()
+        // start() on pairThread — may block that thread's run loop, not main
+        pairThread.schedule { pair.start() }
     }
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
@@ -182,6 +194,24 @@ final class BluetoothManager: NSObject {
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.forEach { $0.unregister() }
+    }
+}
+
+// MARK: - PairThread
+
+private final class PairThread: Thread {
+    override func main() {
+        RunLoop.current.add(Port(), forMode: .default)
+        RunLoop.current.run()
+    }
+
+    func schedule(_ block: @escaping () -> Void) {
+        perform(#selector(_run(_:)), on: self, with: block as AnyObject,
+                waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue])
+    }
+
+    @objc private func _run(_ block: AnyObject) {
+        (block as! () -> Void)()
     }
 }
 

@@ -44,6 +44,7 @@ final class AppState {
         loadSaved()
         setupMonitors()
         refreshDevices()
+        backfillDeviceInfo()
         // Prefer live display name; fall back to last known (persisted) name
         displayName = displayMonitor.currentDisplayName
             ?? UserDefaults.standard.string(forKey: displayNameKey)
@@ -96,7 +97,7 @@ final class AppState {
             // Start pairing quickly (0.5s) to register IOBluetoothDevicePair sessions
             // before the device sends its own connection request — this suppresses the
             // system "Connection Request" dialog and handles confirmation automatically.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 log.info("AppState: pairAndConnectSaved (\(addresses.count) devices)")
                 for address in addresses {
                     self?.bluetooth.pair(address) { [weak self] success in
@@ -121,6 +122,21 @@ final class AppState {
                 DispatchQueue.main.async { self?.refreshDevices() }
             }
         }
+    }
+
+    /// Populate savedDeviceInfo for any saved addresses that were added before
+    /// metadata persistence was introduced (they have an address but no stored info).
+    private func backfillDeviceInfo() {
+        var changed = false
+        for device in pairedDevices where savedAddresses.contains(device.address) && savedDeviceInfo[device.address] == nil {
+            savedDeviceInfo[device.address] = SavedDeviceInfo(
+                address: device.address, name: device.name,
+                majorClass: device.majorClass, minorClass: device.minorClass
+            )
+            changed = true
+            log.info("AppState: backfilled device info for \(device.name)")
+        }
+        if changed { persistSaved() }
     }
 
     private func loadSaved() {
