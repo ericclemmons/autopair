@@ -10,6 +10,7 @@ final class AppState {
     private let sleepWakeMonitor = SleepWakeMonitor()
 
     private let savedKey = "AutoPairSavedDevices"
+    private var refreshWorkItem: DispatchWorkItem?
 
     init() {
         loadSaved()
@@ -56,7 +57,10 @@ final class AppState {
 
     private func setupMonitors() {
         bluetooth.onConnectionChanged = { [weak self] in
-            DispatchQueue.main.async { self?.refreshDevices() }
+            self?.refreshWorkItem?.cancel()
+            let work = DispatchWorkItem { self?.refreshDevices() }
+            self?.refreshWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
         }
 
         powerMonitor.onACPower = { [weak self] in

@@ -77,15 +77,24 @@ final class BluetoothManager: NSObject {
         return result
     }
 
-    func connect(_ address: String) {
+    func connect(_ address: String, attempts: Int = 5, delay: Double = 2.0) {
         guard let device = IOBluetoothDevice(addressString: address) else {
             log.error("connect: device not found \(address)")
             return
         }
-        log.info("connect: \(device.name ?? address)")
+        if device.isConnected() {
+            log.info("connect: \(device.name ?? address) already connected")
+            return
+        }
+        log.info("connect: \(device.name ?? address) (attempt \(6 - attempts)/5)")
         let result = device.openConnection()
-        if result != kIOReturnSuccess {
-            log.error("connect failed \(address): \(result)")
+        if result == kIOReturnSuccess { return }
+        guard attempts > 1 else {
+            log.error("connect: \(device.name ?? address) failed after all attempts")
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.connect(address, attempts: attempts - 1, delay: min(delay * 1.5, 10))
         }
     }
 

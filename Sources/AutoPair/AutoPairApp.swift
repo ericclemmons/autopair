@@ -70,13 +70,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let refresh = NSMenuItem(title: "Refresh Devices", action: #selector(refreshDevices), keyEquivalent: "")
-        refresh.target = self
-        menu.addItem(refresh)
-
-        menu.addItem(.separator())
-
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"))
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let title = NSMutableAttributedString(string: "Quit")
+        title.append(NSAttributedString(string: "  v\(version)", attributes: [
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+        ]))
+        quitItem.attributedTitle = title
+        menu.addItem(quitItem)
     }
 
     // MARK: - NSMenuDelegate
@@ -102,10 +104,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.representedObject = device.address
         item.view = DeviceMenuItemView(address: device.address, name: name, icon: icon)
         return item
-    }
-
-    @objc private func refreshDevices() {
-        appState.refreshDevices()
     }
 
     // MARK: - Device Icon Rendering
