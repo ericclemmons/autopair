@@ -58,6 +58,7 @@ final class BluetoothManager: NSObject {
 
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [IOBluetoothUserNotification] = []
+    private var pendingPairs: [String: (IOBluetoothDevicePair, PairingDelegate)] = [:]
 
     override init() {
         super.init()
@@ -110,6 +111,36 @@ final class BluetoothManager: NSObject {
         }
     }
 
+    func unpair(_ address: String) {
+        guard let device = IOBluetoothDevice(addressString: address) else {
+            log.error("unpair: device not found \(address)")
+            return
+        }
+        log.info("unpair: \(device.name ?? address)")
+        device.perform(Selector(("remove")))
+    }
+
+    func pair(_ address: String, completion: @escaping (Bool) -> Void) {
+        guard let device = IOBluetoothDevice(addressString: address) else {
+            log.error("pair: device not found \(address)")
+            completion(false)
+            return
+        }
+        guard let pair = IOBluetoothDevicePair(device: device) else {
+            log.error("pair: IOBluetoothDevicePair init failed \(address)")
+            completion(false)
+            return
+        }
+        log.info("pair: starting \(device.name ?? address)")
+        let delegate = PairingDelegate(address: address) { [weak self] success in
+            self?.pendingPairs.removeValue(forKey: address)
+            completion(success)
+        }
+        pair.delegate = delegate
+        pendingPairs[address] = (pair, delegate)
+        pair.start()
+    }
+
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         log.info("BT event: connected \(device.name ?? "unknown")")
         let disconnectNote = device.register(forDisconnectNotification: self, selector: #selector(deviceDisconnected(_:device:)))
@@ -125,5 +156,25 @@ final class BluetoothManager: NSObject {
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.forEach { $0.unregister() }
+    }
+}
+
+private class PairingDelegate: NSObject, IOBluetoothDevicePairDelegate {
+    let address: String
+    let completion: (Bool) -> Void
+
+    init(address: String, completion: @escaping (Bool) -> Void) {
+        self.address = address
+        self.completion = completion
+    }
+
+    func devicePairingConnecting(_ sender: Any!) {
+        log.info("pair: connecting \(self.address)")
+    }
+
+    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
+        let success = error == kIOReturnSuccess
+        log.info("pair: finished \(self.address) success=\(success) error=\(error)")
+        completion(success)
     }
 }

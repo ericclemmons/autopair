@@ -40,7 +40,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let others = appState.pairedDevices.filter { !appState.isDeviceSaved($0.address) }
 
         // Header
-        let header = NSMenuItem(title: "Auto-connect when display attached", action: nil, keyEquivalent: "")
+        let headerTitle = appState.displayName.isEmpty
+            ? "Auto-connect when display attached"
+            : "AutoPair: \(appState.displayName)"
+        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
 
