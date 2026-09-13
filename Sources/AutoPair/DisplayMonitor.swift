@@ -1,41 +1,51 @@
 import AppKit
 import CoreGraphics
 
-final class DisplayMonitor {
-    var onDisplayConnected: ((String) -> Void)?
-    var onDisplayDisconnected: (() -> Void)?
+final class DisplayMonitor: OwnershipTrigger {
+    let kind: OwnershipTriggerKind = .externalDisplay
+    var onChange: ((Bool, String?) -> Void)?
 
     private var previousExternalIDs: Set<CGDirectDisplayID> = []
 
     init() {
         previousExternalIDs = externalDisplayIDs()
+        log.info("DisplayMonitor: initialized, external=\(self.previousExternalIDs.count)")
+    }
+
+    var isActive: Bool { !previousExternalIDs.isEmpty }
+
+    var activeName: String? {
+        firstExternalDisplayName()
+    }
+
+    func start() {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screensChanged),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
-        log.info("DisplayMonitor: initialized, external=\(self.previousExternalIDs.count)")
     }
 
-    var currentDisplayName: String? {
-        firstExternalDisplayName()
+    func stop() {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
     }
 
     @objc private func screensChanged() {
+        let wasActive = isActive
         let current = externalDisplayIDs()
         let added = current.subtracting(previousExternalIDs)
         let removed = previousExternalIDs.subtracting(current)
         previousExternalIDs = current
 
-        if !removed.isEmpty {
-            log.info("DisplayMonitor: external display removed")
-            onDisplayDisconnected?()
-        }
-        if !added.isEmpty {
-            let name = firstExternalDisplayName() ?? "External Display"
-            log.info("DisplayMonitor: external display connected: \(name)")
-            onDisplayConnected?(name)
+        if (!removed.isEmpty || !added.isEmpty), wasActive != isActive {
+            let name = firstExternalDisplayName()
+            log.info("DisplayMonitor: active=\(self.isActive), display=\(name ?? "none")")
+            onChange?(isActive, name)
         }
     }
 
@@ -59,6 +69,6 @@ final class DisplayMonitor {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        stop()
     }
 }

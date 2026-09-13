@@ -1,8 +1,6 @@
 import IOBluetooth
 import SwiftUI
 
-/// Persisted metadata for a saved device so it stays visible in the menu
-/// even after being unpaired (e.g. on display disconnect).
 struct SavedDeviceInfo: Codable {
     let address: String
     let name: String
@@ -20,10 +18,11 @@ struct SavedDeviceInfo: Codable {
 final class AppState {
     var pairedDevices: [BluetoothDevice] = []
     var savedAddresses: Set<String> = []
-    var displayName: String = ""
+    var signalName: String = ""
+    var peerCount = 0
+    var handoffState: HandoffController.State = .idle
+    private(set) var triggerKind: OwnershipTriggerKind
 
-    /// Devices shown in the "saved" section — uses live data when paired,
-    /// falls back to stored metadata when device is unpaired.
     var menuSavedDevices: [BluetoothDevice] {
         let liveByAddress = Dictionary(uniqueKeysWithValues: pairedDevices.map { ($0.address, $0) })
         return savedAddresses.sorted().compactMap { address in
@@ -31,25 +30,41 @@ final class AppState {
         }
     }
 
+    var statusText: String {
+        switch handoffState {
+        case .waitingForRelease: "Waiting for other Mac to release…"
+        case .acquiring: "Connecting devices…"
+        case .owned: "Devices connected"
+        case .failed: "Handoff failed — wake the device and retry"
+        case .idle:
+            signalName.isEmpty ? triggerKind.inactiveTitle : signalName
+        }
+    }
+
     private let bluetooth = BluetoothManager()
-    private let displayMonitor = DisplayMonitor()
+    private let peers = PeerManager()
+    private var trigger: OwnershipTrigger?
+    @ObservationIgnored private lazy var handoff = HandoffController(
+        bluetooth: bluetooth,
+        peers: peers,
+        addresses: { [weak self] in Array(self?.savedAddresses ?? []) }
+    )
 
     private let savedKey = "AutoPairSavedDevices"
     private let savedInfoKey = "AutoPairSavedDeviceInfo"
-    private let displayNameKey = "AutoPairDisplayName"
+    private let triggerKey = "AutoPairOwnershipTrigger"
     private var savedDeviceInfo: [String: SavedDeviceInfo] = [:]
     private var refreshWorkItem: DispatchWorkItem?
 
     init() {
+        let rawTrigger = UserDefaults.standard.string(forKey: triggerKey)
+        triggerKind = OwnershipTriggerKind(rawValue: rawTrigger ?? "") ?? .externalDisplay
         loadSaved()
-        setupMonitors()
         refreshDevices()
         backfillDeviceInfo()
-        // Prefer live display name; fall back to last known (persisted) name
-        displayName = displayMonitor.currentDisplayName
-            ?? UserDefaults.standard.string(forKey: displayNameKey)
-            ?? ""
-        log.info("AppState: init, saved=\(self.savedAddresses.joined(separator: ", ")), display=\(self.displayName)")
+        setupServices()
+        configureTrigger(triggerKind)
+        log.info("AppState: init, trigger=\(self.triggerKind.rawValue), saved=\(self.savedAddresses.count)")
     }
 
     func refreshDevices() {
@@ -64,62 +79,83 @@ final class AppState {
             savedAddresses.insert(address)
             if let device = pairedDevices.first(where: { $0.address == address }) {
                 savedDeviceInfo[address] = SavedDeviceInfo(
-                    address: address,
-                    name: device.name,
-                    majorClass: device.majorClass,
-                    minorClass: device.minorClass
+                    address: address, name: device.name,
+                    majorClass: device.majorClass, minorClass: device.minorClass
                 )
             }
         }
         persistSaved()
-        log.info("AppState: toggled \(address), saved=\(self.savedAddresses.joined(separator: ", "))")
     }
 
-    func isDeviceSaved(_ address: String) -> Bool {
-        savedAddresses.contains(address)
+    func isDeviceSaved(_ address: String) -> Bool { savedAddresses.contains(address) }
+
+    func setTriggerKind(_ kind: OwnershipTriggerKind) {
+        guard triggerKind != kind else { return }
+        triggerKind = kind
+        UserDefaults.standard.set(kind.rawValue, forKey: triggerKey)
+        configureTrigger(kind)
     }
 
-    // MARK: - Private
+    func retryHandoff() {
+        handoff.ownershipChanged(isActive: trigger?.isActive == true)
+    }
 
-    private func setupMonitors() {
+    private func setupServices() {
         bluetooth.onConnectionChanged = { [weak self] in
             self?.refreshWorkItem?.cancel()
             let work = DispatchWorkItem { self?.refreshDevices() }
             self?.refreshWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
         }
-
-        displayMonitor.onDisplayConnected = { [weak self] name in
-            log.info("→ Display connected: \(name)")
-            self?.displayName = name
-            UserDefaults.standard.set(name, forKey: "AutoPairDisplayName")
-            let addresses = Array(self?.savedAddresses ?? [])
-            log.info("AppState: powerCycleThenPairAndConnect (\(addresses.count) devices)")
-            self?.bluetooth.powerCycleThenPairAndConnect(addresses) { [weak self] in
+        handoff.onStateChange = { [weak self] state in
+            self?.handoffState = state
+            if state == .owned || state == .failed { self?.refreshDevices() }
+        }
+        peers.onPeerCountChanged = { [weak self] in self?.peerCount = $0 }
+        peers.onReleaseRequest = { [weak self] requested, completion in
+            guard let self else { completion(false); return }
+            let allowed = requested.filter { self.savedAddresses.contains($0) }
+            guard !allowed.isEmpty else { completion(false); return }
+            self.handoff.releaseForPeer(allowed) { [weak self] success in
                 self?.refreshDevices()
+                completion(success)
             }
         }
+        peers.start()
+    }
 
-        displayMonitor.onDisplayDisconnected = { [weak self] in
-            log.info("→ Display disconnected")
-            let addresses = Array(self?.savedAddresses ?? [])
-            self?.bluetooth.unpairAll(addresses) { [weak self] in
-                self?.refreshDevices()
+    private func configureTrigger(_ kind: OwnershipTriggerKind) {
+        trigger?.stop()
+        let newTrigger = OwnershipTriggerFactory.make(kind)
+        trigger = newTrigger
+        newTrigger.onChange = { [weak self, weak newTrigger] active, name in
+            guard let self, self.trigger === newTrigger else { return }
+            self.signalName = active ? (name ?? kind.title) : ""
+            self.handoff.ownershipChanged(isActive: active)
+        }
+        newTrigger.start()
+        signalName = newTrigger.isActive ? (newTrigger.activeName ?? kind.title) : ""
+
+        // Claim on launch/config change if the selected physical signal is present.
+        if newTrigger.isActive {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self, weak newTrigger] in
+                guard let self, self.trigger === newTrigger else { return }
+                self.handoff.ownershipChanged(isActive: true)
             }
+        } else {
+            handoff.ownershipChanged(isActive: false)
         }
     }
 
-    /// Populate savedDeviceInfo for any saved addresses that were added before
-    /// metadata persistence was introduced (they have an address but no stored info).
     private func backfillDeviceInfo() {
         var changed = false
-        for device in pairedDevices where savedAddresses.contains(device.address) && savedDeviceInfo[device.address] == nil {
+        for device in pairedDevices where savedAddresses.contains(device.address)
+            && savedDeviceInfo[device.address] == nil {
             savedDeviceInfo[device.address] = SavedDeviceInfo(
                 address: device.address, name: device.name,
                 majorClass: device.majorClass, minorClass: device.minorClass
             )
             changed = true
-            log.info("AppState: backfilled device info for \(device.name)")
         }
         if changed { persistSaved() }
     }
@@ -139,5 +175,10 @@ final class AppState {
         if let data = try? JSONEncoder().encode(savedDeviceInfo) {
             UserDefaults.standard.set(data, forKey: savedInfoKey)
         }
+    }
+
+    deinit {
+        trigger?.stop()
+        peers.stop()
     }
 }

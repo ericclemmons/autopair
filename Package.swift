@@ -17,5 +17,10 @@ let package = Package(
                 ]),
             ]
         ),
+        .testTarget(
+            name: "AutoPairTests",
+            dependencies: ["AutoPair"],
+            path: "Tests/AutoPairTests"
+        ),
     ]
 )

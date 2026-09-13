@@ -40,12 +40,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let others = appState.pairedDevices.filter { !appState.isDeviceSaved($0.address) }
 
         // Header
-        let headerTitle = appState.displayName.isEmpty
-            ? "Auto-connect when display attached"
-            : "AutoPair: \(appState.displayName)"
-        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "AutoPair: \(appState.statusText)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
+
+        let peerLabel = appState.peerCount == 1 ? "1 other Mac found" : "\(appState.peerCount) other Macs found"
+        let peers = NSMenuItem(title: peerLabel, action: nil, keyEquivalent: "")
+        peers.isEnabled = false
+        menu.addItem(peers)
+        menu.addItem(.separator())
 
         // Saved devices
         if saved.isEmpty {
@@ -69,6 +72,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             moreItem.submenu = submenu
             menu.addItem(moreItem)
+        }
+
+        menu.addItem(.separator())
+
+        let triggerItem = NSMenuItem(title: "Ownership Trigger", action: nil, keyEquivalent: "")
+        let triggerMenu = NSMenu()
+        for kind in OwnershipTriggerKind.allCases {
+            let item = NSMenuItem(title: kind.title, action: #selector(selectTrigger(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind.rawValue
+            item.state = appState.triggerKind == kind ? .on : .off
+            triggerMenu.addItem(item)
+        }
+        triggerItem.submenu = triggerMenu
+        menu.addItem(triggerItem)
+
+        if appState.handoffState == .failed {
+            let retry = NSMenuItem(title: "Retry Handoff", action: #selector(retryHandoff), keyEquivalent: "")
+            retry.target = self
+            menu.addItem(retry)
         }
 
         menu.addItem(.separator())
@@ -97,6 +120,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleDevice(_ sender: NSMenuItem) {
         guard let address = sender.representedObject as? String else { return }
         appState.toggleDevice(address)
+    }
+
+    @objc private func selectTrigger(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let kind = OwnershipTriggerKind(rawValue: raw) else { return }
+        appState.setTriggerKind(kind)
+    }
+
+    @objc private func retryHandoff() {
+        appState.retryHandoff()
     }
 
     private func makeDeviceMenuItem(_ device: BluetoothDevice) -> NSMenuItem {

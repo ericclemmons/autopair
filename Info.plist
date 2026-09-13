@@ -19,6 +19,12 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>AutoPair needs Bluetooth access to connect and disconnect your devices when an external display is attached.</string>
+    <string>AutoPair needs Bluetooth access to hand off your selected devices between Macs.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AutoPair coordinates with your other Macs before handing off Bluetooth devices.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_autopair._tcp</string>
+    </array>
 </dict>
 </plist>

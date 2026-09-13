@@ -14,25 +14,49 @@ make build    # build only
 bash build-app.sh release
 ```
 
-There are no tests. The app is verified manually by running it.
+Run `swift test` for the trigger and handoff state-machine regression suite. Hardware
+handoffs still require manual verification with two Macs and a selected peripheral.
 
 ## Architecture
 
 Menu bar app with no SwiftUI views — everything is `AppKit` + `NSMenu`. Entry point is `AutoPairApp.swift` (`@main`).
 
-**Data flow:** `AppState` owns all state and wires together the monitors and `BluetoothManager`. `AppDelegate` reads from `AppState` imperatively when `menuNeedsUpdate` fires.
+**Data flow:** `AppState` owns all state and wires a selected `OwnershipTrigger` to
+`HandoffController`, `PeerManager`, and `BluetoothManager`. `AppDelegate` reads from
+`AppState` imperatively when `menuNeedsUpdate` fires.
 
 **Trigger → action:**
-- External display connected → pair + connect saved devices (2s delay to allow pairing mode)
-- External display disconnected → disconnect + unpair saved devices
+- Selected trigger becomes active → ask Bonjour peers to release → pair/connect locally
+- Peer release request → unpair locally → acknowledge only after release completes
+- Trigger becomes inactive → cancel local acquisition; the winning Mac drives release
 
 **Key files:**
-- `AppState.swift` — `@Observable` state, owns all subsystems, wires monitor callbacks to BT actions. Saved device addresses persisted in `UserDefaults` (`AutoPairSavedDevices`).
-- `BluetoothManager.swift` — wraps `IOBluetooth`. `pair()` uses `IOBluetoothDevicePair`; `unpair()` calls private `[device remove]` selector; `connect()` retries with exponential backoff (5 attempts).
-- `DisplayMonitor.swift` — watches `NSApplication.didChangeScreenParametersNotification`, diffs external `CGDirectDisplayID` sets to detect add/remove.
+- `AppState.swift` — composition root; persists selected devices and trigger.
+- `OwnershipTrigger.swift` — pluggable ownership signal protocol, enum, and factory.
+- `DisplayMonitor.swift` — external-display trigger using screen notifications.
+- `CalDigitDockMonitor.swift` — CalDigit trigger using IOKit notifications.
+- `HandoffController.swift` — testable ordered release/acquire state machine.
+- `PeerManager.swift` — Bonjour discovery and acknowledgment protocol between Macs.
+- `BluetoothManager.swift` — native pairing, connection verification, and private `remove`; no `blueutil` or radio power cycle.
 - `AutoPairApp.swift` — builds `NSMenu` on demand, renders custom `DeviceMenuItemView` (26pt icon circle + label, 36pt row height, gray hover to match macOS Bluetooth panel).
 
-**Why unpair/pair instead of connect/disconnect:** Magic Keyboard/Trackpad can only be actively connected to one Mac. `openConnection()` fails when a device is paired elsewhere. Unpairing puts the device into pairing mode so it can be claimed by this Mac.
+**Why coordinated unpair/pair instead of connect/disconnect:** Magic Keyboard/Trackpad
+can invalidate the other Mac's bond. The destination waits for an explicit peer
+release acknowledgment, then tries an existing bond and falls back to native pairing.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repo uses the default five-role triage vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
 
 ## Releasing
 
