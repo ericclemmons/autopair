@@ -35,6 +35,7 @@ Menu bar app with no SwiftUI views — everything is `AppKit` + `NSMenu`. Entry 
 - `OwnershipTrigger.swift` — pluggable ownership signal protocol, enum, and factory.
 - `DisplayMonitor.swift` — external-display trigger using screen notifications.
 - `ConnectedHardwareMonitor.swift` — generic USB/Thunderbolt IOKit trigger and scanner.
+- `SleepMonitor.swift` — delays imminent sleep briefly so release can finish.
 - `HandoffController.swift` — testable ordered release/acquire state machine.
 - `PeerManager.swift` — Bonjour discovery, six-digit pairing, trust persistence, and authenticated handoffs.
 - `BluetoothManager.swift` — native pairing, connection verification, and private `remove`; no `blueutil` or radio power cycle.

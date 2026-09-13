@@ -109,11 +109,15 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             log.error("Bluetooth: no device object for \(address)")
             return false
         }
+        Diagnostics.record("Bluetooth acquire: paired=\(initial.isPaired()), connected=\(initial.isConnected())")
         if initial.isConnected() { return true }
 
         // Try a retained bond first. If it is stale after another Mac's handoff,
         // remove it before beginning native pairing.
-        if initial.isPaired(), connectAndVerify(initial) { return true }
+        if initial.isPaired(), connectAndVerify(initial) {
+            Diagnostics.record("Bluetooth acquire: retained pairing connected")
+            return true
+        }
         if initial.isPaired() {
             guard remove(initial) else { return false }
             Thread.sleep(forTimeInterval: 0.5)
@@ -121,15 +125,18 @@ final class BluetoothManager: NSObject, BluetoothControlling {
 
         guard let device = IOBluetoothDevice(addressString: address), pairSync(device) else {
             log.error("Bluetooth: pairing failed for \(address)")
+            Diagnostics.record("Bluetooth acquire: native pairing failed")
             return false
         }
         let success = device.isConnected() || connectAndVerify(device)
         if !success { log.error("Bluetooth: connection failed after pairing for \(address)") }
+        Diagnostics.record("Bluetooth acquire: post-pair connection \(success ? "succeeded" : "failed")")
         return success
     }
 
     private func releaseSync(_ address: String) -> Bool {
         guard let device = IOBluetoothDevice(addressString: address) else { return true }
+        Diagnostics.record("Bluetooth release: paired=\(device.isPaired()), connected=\(device.isConnected())")
         guard device.isPaired() || device.isConnected() else { return true }
         guard remove(device) else {
             log.error("Bluetooth: native remove unavailable for \(address)")
@@ -137,10 +144,15 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         }
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline {
-            if !device.isConnected() && !device.isPaired() { return true }
+            if !device.isConnected() && !device.isPaired() {
+                Diagnostics.record("Bluetooth release: disconnected and pairing removed")
+                return true
+            }
             Thread.sleep(forTimeInterval: 0.1)
         }
-        return !device.isConnected()
+        let disconnected = !device.isConnected()
+        Diagnostics.record("Bluetooth release: deadline reached, disconnected=\(disconnected), paired=\(device.isPaired())")
+        return disconnected
     }
 
     private func remove(_ device: IOBluetoothDevice) -> Bool {

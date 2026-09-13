@@ -46,6 +46,7 @@ final class AppState {
 
     private let bluetooth = BluetoothManager()
     private let peers = PeerManager()
+    private let sleepMonitor = SleepMonitor()
     private var trigger: OwnershipTrigger?
     @ObservationIgnored private lazy var handoff = HandoffController(
         bluetooth: bluetooth,
@@ -148,6 +149,11 @@ final class AppState {
     }
 
     private func setupServices() {
+        sleepMonitor.onWillSleep = { [weak self] completion in
+            guard let self else { completion(); return }
+            self.handoff.prepareForSleep(completion: completion)
+        }
+        sleepMonitor.start()
         bluetooth.onConnectionChanged = { [weak self] in
             self?.refreshWorkItem?.cancel()
             let work = DispatchWorkItem { self?.refreshDevices() }
@@ -233,6 +239,7 @@ final class AppState {
     }
 
     deinit {
+        sleepMonitor.stop()
         trigger?.stop()
         peers.stop()
     }

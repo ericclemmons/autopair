@@ -125,6 +125,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
+        let diagnostics = NSMenuItem(title: "Copy Diagnostics",
+                                     action: #selector(copyDiagnostics), keyEquivalent: "")
+        diagnostics.target = self
+        menu.addItem(diagnostics)
+
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         let title = NSMutableAttributedString(string: "Quit")
@@ -163,6 +168,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func retryHandoff() {
         appState.retryHandoff()
+    }
+
+    @objc private func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(Diagnostics.contents(), forType: .string)
     }
 
     @objc private func showPairingCode() {

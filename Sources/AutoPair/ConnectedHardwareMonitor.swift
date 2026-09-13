@@ -164,7 +164,10 @@ final class ConnectedHardwareMonitor: OwnershipTrigger {
                 matchingRegistryIDs.remove(registryID)
             }
         }
-        if wasActive != isActive { onChange?(isActive, activeName) }
+        if wasActive != isActive {
+            Diagnostics.record("hardware trigger \(identity.title) is \(isActive ? "active" : "inactive")")
+            onChange?(isActive, activeName)
+        }
     }
 
     deinit { stop() }

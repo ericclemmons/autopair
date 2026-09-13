@@ -44,10 +44,11 @@ Mac A removes its pairing and confirms the devices are disconnected
 Mac B pairs and connects through Apple's native IOBluetooth framework
 ```
 
-The losing Mac releases immediately when its trigger disappears. This is important
-for a closed-lid Mac that will sleep and may lose dock Ethernet as soon as the cable
-is unplugged. The winning Mac also requests and waits for peer release when the old
-Mac remains reachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
+The losing Mac releases when its trigger disappears. For a closed-lid Mac, AutoPair
+also participates in macOS power notifications: it briefly delays the final sleep
+acknowledgement until the selected devices are released (with a 12-second safety
+limit). The winning Mac also requests peer release and retries acquisition if the old
+Mac becomes unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),
 not polling. AutoPair records serial number when available, otherwise vendor/product
@@ -65,6 +66,8 @@ AutoPair instances can be discovered for setup but cannot release devices.
 - Both Macs must be awake, running AutoPair, and on the same local network during
   initial computer pairing. Proactive release handles the closed-lid cable move later.
 - Apple Magic devices may need a click or key press to wake before pairing.
+- Choose **Copy Diagnostics** after a failed handoff to copy AutoPair's recent trigger,
+  sleep, release, and acquisition timeline for troubleshooting.
 - AutoPair uses IOBluetooth's private `remove` selector to release a pairing. This is
   suitable for a directly distributed/notarized app, but not for the Mac App Store,
   and a future macOS release could change it.
