@@ -34,9 +34,9 @@ Menu bar app with no SwiftUI views — everything is `AppKit` + `NSMenu`. Entry 
 - `AppState.swift` — composition root; persists selected devices and trigger.
 - `OwnershipTrigger.swift` — pluggable ownership signal protocol, enum, and factory.
 - `DisplayMonitor.swift` — external-display trigger using screen notifications.
-- `CalDigitDockMonitor.swift` — CalDigit trigger using IOKit notifications.
+- `ConnectedHardwareMonitor.swift` — generic USB/Thunderbolt IOKit trigger and scanner.
 - `HandoffController.swift` — testable ordered release/acquire state machine.
-- `PeerManager.swift` — Bonjour discovery and acknowledgment protocol between Macs.
+- `PeerManager.swift` — Bonjour discovery, six-digit pairing, trust persistence, and authenticated handoffs.
 - `BluetoothManager.swift` — native pairing, connection verification, and private `remove`; no `blueutil` or radio power cycle.
 - `AutoPairApp.swift` — builds `NSMenu` on demand, renders custom `DeviceMenuItemView` (26pt icon circle + label, 36pt row height, gray hover to match macOS Bluetooth panel).
 

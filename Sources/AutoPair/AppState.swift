@@ -19,9 +19,11 @@ final class AppState {
     var pairedDevices: [BluetoothDevice] = []
     var savedAddresses: Set<String> = []
     var signalName: String = ""
-    var peerCount = 0
+    var discoveredComputers: [ComputerInfo] = []
+    var trustedComputers: [TrustedComputer] = []
     var handoffState: HandoffController.State = .idle
     private(set) var triggerKind: OwnershipTriggerKind
+    private(set) var selectedHardware: HardwareIdentity? = nil
 
     var menuSavedDevices: [BluetoothDevice] {
         let liveByAddress = Dictionary(uniqueKeysWithValues: pairedDevices.map { ($0.address, $0) })
@@ -54,12 +56,30 @@ final class AppState {
     private let savedKey = "AutoPairSavedDevices"
     private let savedInfoKey = "AutoPairSavedDeviceInfo"
     private let triggerKey = "AutoPairOwnershipTrigger"
+    private let hardwareKey = "AutoPairOwnershipHardware"
     private var savedDeviceInfo: [String: SavedDeviceInfo] = [:]
     private var refreshWorkItem: DispatchWorkItem?
 
     init() {
         let rawTrigger = UserDefaults.standard.string(forKey: triggerKey)
-        triggerKind = OwnershipTriggerKind(rawValue: rawTrigger ?? "") ?? .externalDisplay
+        if rawTrigger == "calDigitDock" {
+            triggerKind = .connectedHardware
+            selectedHardware = HardwareIdentity(
+                transport: .usb, vendorID: 0x2188, productID: nil,
+                vendorName: "CalDigit", productName: "CalDigit connected hardware",
+                serialNumber: nil
+            )
+            UserDefaults.standard.set(OwnershipTriggerKind.connectedHardware.rawValue,
+                                      forKey: "AutoPairOwnershipTrigger")
+            if let selectedHardware, let data = try? JSONEncoder().encode(selectedHardware) {
+                UserDefaults.standard.set(data, forKey: "AutoPairOwnershipHardware")
+            }
+        } else {
+            triggerKind = OwnershipTriggerKind(rawValue: rawTrigger ?? "") ?? .externalDisplay
+            if let data = UserDefaults.standard.data(forKey: hardwareKey) {
+                selectedHardware = try? JSONDecoder().decode(HardwareIdentity.self, from: data)
+            }
+        }
         loadSaved()
         refreshDevices()
         backfillDeviceInfo()
@@ -91,11 +111,37 @@ final class AppState {
     func isDeviceSaved(_ address: String) -> Bool { savedAddresses.contains(address) }
 
     func setTriggerKind(_ kind: OwnershipTriggerKind) {
-        guard triggerKind != kind else { return }
+        guard kind == .externalDisplay, triggerKind != kind else { return }
         triggerKind = kind
         UserDefaults.standard.set(kind.rawValue, forKey: triggerKey)
         configureTrigger(kind)
     }
+
+    func setHardwareTrigger(_ hardware: HardwareIdentity) {
+        guard triggerKind != .connectedHardware || selectedHardware != hardware else { return }
+        selectedHardware = hardware
+        triggerKind = .connectedHardware
+        UserDefaults.standard.set(triggerKind.rawValue, forKey: triggerKey)
+        if let data = try? JSONEncoder().encode(hardware) {
+            UserDefaults.standard.set(data, forKey: hardwareKey)
+        }
+        configureTrigger(.connectedHardware)
+    }
+
+    func availableHardware() -> [HardwareIdentity] { HardwareRegistry.attachedHardware() }
+
+    var thisComputer: ComputerInfo { peers.thisComputer }
+
+    func generatePairingCode() -> String { peers.generatePairingCode() }
+
+    func cancelPairingCode() { peers.cancelPairingCode() }
+
+    func pairComputer(_ id: String, code: String,
+                      completion: @escaping (Result<TrustedComputer, ComputerPairingError>) -> Void) {
+        peers.pair(with: id, code: code, completion: completion)
+    }
+
+    func forgetComputer(_ id: String) { peers.forgetComputer(id) }
 
     func retryHandoff() {
         handoff.ownershipChanged(isActive: trigger?.isActive == true)
@@ -112,7 +158,10 @@ final class AppState {
             self?.handoffState = state
             if state == .owned || state == .failed { self?.refreshDevices() }
         }
-        peers.onPeerCountChanged = { [weak self] in self?.peerCount = $0 }
+        peers.onComputersChanged = { [weak self] discovered, trusted in
+            self?.discoveredComputers = discovered
+            self?.trustedComputers = trusted
+        }
         peers.onReleaseRequest = { [weak self] requested, completion in
             guard let self else { completion(false); return }
             let allowed = requested.filter { self.savedAddresses.contains($0) }
@@ -127,7 +176,12 @@ final class AppState {
 
     private func configureTrigger(_ kind: OwnershipTriggerKind) {
         trigger?.stop()
-        let newTrigger = OwnershipTriggerFactory.make(kind)
+        guard let newTrigger = OwnershipTriggerFactory.make(kind, hardware: selectedHardware) else {
+            trigger = nil
+            signalName = "Choose connected hardware"
+            handoff.ownershipChanged(isActive: false)
+            return
+        }
         trigger = newTrigger
         newTrigger.onChange = { [weak self, weak newTrigger] active, name in
             guard let self, self.trigger === newTrigger else { return }

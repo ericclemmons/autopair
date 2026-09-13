@@ -54,9 +54,9 @@ Sources/AutoPair/
   AppState.swift         # Composition root and persisted selections
   OwnershipTrigger.swift # Trigger protocol, kinds, and factory
   DisplayMonitor.swift   # External-display ownership trigger
-  CalDigitDockMonitor.swift # Event-driven IOKit dock trigger
+  ConnectedHardwareMonitor.swift # Event-driven USB/Thunderbolt trigger
   HandoffController.swift # Ordered peer release → local acquisition
-  PeerManager.swift      # Bonjour discovery and handoff protocol
+  PeerManager.swift      # Bonjour pairing and authenticated handoff protocol
   BluetoothManager.swift # Native IOBluetooth pair/release/connect
   Log.swift              # Unified logging
 Tests/AutoPairTests/      # Trigger matching and transaction tests

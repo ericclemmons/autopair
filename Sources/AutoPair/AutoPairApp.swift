@@ -44,10 +44,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         header.isEnabled = false
         menu.addItem(header)
 
-        let peerLabel = appState.peerCount == 1 ? "1 other Mac found" : "\(appState.peerCount) other Macs found"
-        let peers = NSMenuItem(title: peerLabel, action: nil, keyEquivalent: "")
-        peers.isEnabled = false
-        menu.addItem(peers)
         menu.addItem(.separator())
 
         // Saved devices
@@ -78,15 +74,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let triggerItem = NSMenuItem(title: "Ownership Trigger", action: nil, keyEquivalent: "")
         let triggerMenu = NSMenu()
-        for kind in OwnershipTriggerKind.allCases {
-            let item = NSMenuItem(title: kind.title, action: #selector(selectTrigger(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = kind.rawValue
-            item.state = appState.triggerKind == kind ? .on : .off
-            triggerMenu.addItem(item)
+
+        let display = NSMenuItem(title: OwnershipTriggerKind.externalDisplay.title,
+                                 action: #selector(selectDisplayTrigger), keyEquivalent: "")
+        display.target = self
+        display.state = appState.triggerKind == .externalDisplay ? .on : .off
+        triggerMenu.addItem(display)
+
+        let hardware = NSMenuItem(title: OwnershipTriggerKind.connectedHardware.title,
+                                  action: nil, keyEquivalent: "")
+        hardware.state = appState.triggerKind == .connectedHardware ? .on : .off
+        let hardwareMenu = NSMenu()
+        let availableHardware = appState.availableHardware()
+        if let selected = appState.selectedHardware,
+           !availableHardware.contains(where: selected.matches) {
+            let current = NSMenuItem(title: "\(selected.title) — Disconnected",
+                                     action: nil, keyEquivalent: "")
+            current.state = appState.triggerKind == .connectedHardware ? .on : .off
+            current.isEnabled = false
+            hardwareMenu.addItem(current)
+            hardwareMenu.addItem(.separator())
         }
+        if availableHardware.isEmpty {
+            let empty = NSMenuItem(title: "No external hardware found", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            hardwareMenu.addItem(empty)
+        } else {
+            for candidate in availableHardware {
+                let item = NSMenuItem(title: candidate.title,
+                                      action: #selector(selectHardwareTrigger(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = try? JSONEncoder().encode(candidate)
+                item.state = appState.triggerKind == .connectedHardware
+                    && appState.selectedHardware?.matches(candidate) == true ? .on : .off
+                hardwareMenu.addItem(item)
+            }
+        }
+        hardware.submenu = hardwareMenu
+        triggerMenu.addItem(hardware)
         triggerItem.submenu = triggerMenu
         menu.addItem(triggerItem)
+
+        menu.addItem(makeComputersMenuItem())
 
         if appState.handoffState == .failed {
             let retry = NSMenuItem(title: "Retry Handoff", action: #selector(retryHandoff), keyEquivalent: "")
@@ -122,14 +151,144 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appState.toggleDevice(address)
     }
 
-    @objc private func selectTrigger(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let kind = OwnershipTriggerKind(rawValue: raw) else { return }
-        appState.setTriggerKind(kind)
+    @objc private func selectDisplayTrigger() {
+        appState.setTriggerKind(.externalDisplay)
+    }
+
+    @objc private func selectHardwareTrigger(_ sender: NSMenuItem) {
+        guard let data = sender.representedObject as? Data,
+              let hardware = try? JSONDecoder().decode(HardwareIdentity.self, from: data) else { return }
+        appState.setHardwareTrigger(hardware)
     }
 
     @objc private func retryHandoff() {
         appState.retryHandoff()
+    }
+
+    @objc private func showPairingCode() {
+        let code = appState.generatePairingCode()
+        let codeField = NSTextField(labelWithString: code)
+        codeField.alignment = .center
+        codeField.font = .monospacedDigitSystemFont(ofSize: 24, weight: .medium)
+        codeField.isSelectable = true
+        codeField.frame = NSRect(x: 0, y: 0, width: 220, height: 32)
+        let alert = NSAlert()
+        alert.messageText = "Pair This Mac"
+        alert.informativeText = "On your other Mac, choose Pair Another Mac and enter this code. It expires in 5 minutes."
+        alert.accessoryView = codeField
+        alert.addButton(withTitle: "Done")
+        present(alert)
+        appState.cancelPairingCode()
+    }
+
+    @objc private func pairComputer(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let computer = appState.discoveredComputers.first(where: { $0.id == id }) else { return }
+        let input = NSTextField(string: "")
+        input.placeholderString = "6-digit code"
+        input.alignment = .center
+        input.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        input.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
+
+        let alert = NSAlert()
+        alert.messageText = "Pair with \(computer.name)"
+        alert.informativeText = "Enter the code shown by AutoPair on \(computer.name)."
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Pair Computer")
+        alert.addButton(withTitle: "Not Now")
+        guard present(alert) == .alertFirstButtonReturn else { return }
+
+        let code = input.stringValue.filter(\.isNumber)
+        guard code.count == 6 else {
+            showResult(title: "Code Needs 6 Digits",
+                       message: "Show a new pairing code on \(computer.name) and enter all 6 digits.")
+            return
+        }
+        appState.pairComputer(id, code: code) { [weak self] result in
+            switch result {
+            case .success(let trusted):
+                self?.showResult(title: "\(trusted.name) Is Trusted",
+                                 message: "Only paired computers can now request Bluetooth handoffs.")
+            case .failure(let error):
+                self?.showResult(title: "Couldn't Pair Computers",
+                                 message: error.localizedDescription)
+            }
+        }
+    }
+
+    @objc private func forgetComputer(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        appState.forgetComputer(id)
+    }
+
+    private func makeComputersMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Trusted Computers", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        let thisMac = NSMenuItem(title: "This Mac: \(appState.thisComputer.name)",
+                                 action: nil, keyEquivalent: "")
+        thisMac.isEnabled = false
+        submenu.addItem(thisMac)
+        submenu.addItem(.separator())
+
+        if appState.trustedComputers.isEmpty {
+            let empty = NSMenuItem(title: "No trusted computers", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        } else {
+            for computer in appState.trustedComputers {
+                let trusted = NSMenuItem(title: computer.name, action: nil, keyEquivalent: "")
+                trusted.state = .on
+                let computerMenu = NSMenu()
+                let forget = NSMenuItem(title: "Forget Computer",
+                                        action: #selector(forgetComputer(_:)), keyEquivalent: "")
+                forget.target = self
+                forget.representedObject = computer.id
+                computerMenu.addItem(forget)
+                trusted.submenu = computerMenu
+                submenu.addItem(trusted)
+            }
+        }
+
+        submenu.addItem(.separator())
+        let add = NSMenuItem(title: "Pair Another Mac", action: nil, keyEquivalent: "")
+        let addMenu = NSMenu()
+        if appState.discoveredComputers.isEmpty {
+            let none = NSMenuItem(title: "No unpaired Macs found", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            addMenu.addItem(none)
+        } else {
+            for computer in appState.discoveredComputers {
+                let peer = NSMenuItem(title: computer.name,
+                                      action: #selector(pairComputer(_:)), keyEquivalent: "")
+                peer.target = self
+                peer.representedObject = computer.id
+                addMenu.addItem(peer)
+            }
+        }
+        add.submenu = addMenu
+        submenu.addItem(add)
+
+        let showCode = NSMenuItem(title: "Show Pairing Code…",
+                                  action: #selector(showPairingCode), keyEquivalent: "")
+        showCode.target = self
+        submenu.addItem(showCode)
+        item.submenu = submenu
+        return item
+    }
+
+    @discardableResult
+    private func present(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal()
+    }
+
+    private func showResult(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "Done")
+        present(alert)
     }
 
     private func makeDeviceMenuItem(_ device: BluetoothDevice) -> NSMenuItem {

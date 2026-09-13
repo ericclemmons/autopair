@@ -95,7 +95,7 @@ jobs:
 
             url \"https://github.com/ericclemmons/autopair/releases/download/v#{version}/AutoPair.zip\"
             name \"AutoPair\"
-            desc \"Hand off Bluetooth devices using a display or dock ownership trigger\"
+            desc \"Hand off Bluetooth devices using display or connected-hardware triggers\"
             homepage \"https://github.com/ericclemmons/autopair\"
 
             app \"AutoPair.app\"

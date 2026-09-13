@@ -2,21 +2,21 @@ import Foundation
 
 enum OwnershipTriggerKind: String, CaseIterable, Identifiable {
     case externalDisplay
-    case calDigitDock
+    case connectedHardware
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .externalDisplay: "External Display"
-        case .calDigitDock: "CalDigit Dock"
+        case .connectedHardware: "Connected Hardware"
         }
     }
 
     var inactiveTitle: String {
         switch self {
         case .externalDisplay: "No external display"
-        case .calDigitDock: "CalDigit dock disconnected"
+        case .connectedHardware: "Selected hardware disconnected"
         }
     }
 }
@@ -34,10 +34,12 @@ protocol OwnershipTrigger: AnyObject {
 }
 
 enum OwnershipTriggerFactory {
-    static func make(_ kind: OwnershipTriggerKind) -> OwnershipTrigger {
+    static func make(_ kind: OwnershipTriggerKind,
+                     hardware: HardwareIdentity? = nil) -> OwnershipTrigger? {
         switch kind {
         case .externalDisplay: DisplayMonitor()
-        case .calDigitDock: CalDigitDockMonitor()
+        case .connectedHardware:
+            hardware.map(ConnectedHardwareMonitor.init)
         }
     }
 }
