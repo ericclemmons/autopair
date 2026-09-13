@@ -32,6 +32,7 @@ final class AppState {
 
     var statusText: String {
         switch handoffState {
+        case .releasing: "Releasing devices…"
         case .waitingForRelease: "Waiting for other Mac to release…"
         case .acquiring: "Connecting devices…"
         case .owned: "Devices connected"

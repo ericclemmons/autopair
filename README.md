@@ -42,9 +42,10 @@ Mac A removes its pairing and confirms the devices are disconnected
 Mac B pairs and connects through Apple's native IOBluetooth framework
 ```
 
-The losing trigger becoming inactive does not independently forget devices. The
-winning Mac initiates an ordered transaction, which avoids the release/acquire race
-in older versions. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
+The losing Mac releases immediately when its trigger disappears. This is important
+for a closed-lid Mac that will sleep and may lose dock Ethernet as soon as the cable
+is unplugged. The winning Mac also requests and waits for peer release when the old
+Mac remains reachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 
 CalDigit detection is event-driven (IOKit first-match and termination notifications),
 not polling. It matches CalDigit's USB vendor ID (`0x2188`) and also accepts registry

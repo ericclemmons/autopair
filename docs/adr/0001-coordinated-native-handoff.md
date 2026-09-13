@@ -14,6 +14,8 @@ frequently invalidated or retained bond state across that race.
 ## Decision
 
 - The Mac whose selected ownership trigger becomes active initiates handoff.
+- A Mac whose trigger becomes inactive proactively releases before dock removal can
+  put a closed-lid Mac to sleep or remove its network connection.
 - AutoPair instances discover each other through Bonjour on the local network.
 - The destination waits for release acknowledgments before acquiring locally.
 - Bluetooth mutation uses IOBluetooth directly on one serial queue.

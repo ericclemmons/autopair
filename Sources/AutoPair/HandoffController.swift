@@ -9,6 +9,7 @@ protocol PeerCoordinating: AnyObject {
 final class HandoffController {
     enum State: Equatable {
         case idle
+        case releasing
         case waitingForRelease
         case acquiring
         case owned
@@ -34,13 +35,22 @@ final class HandoffController {
 
     func ownershipChanged(isActive: Bool) {
         operationID = UUID()
-        guard isActive else {
-            state = .idle
-            return
-        }
         let targets = addresses()
         guard !targets.isEmpty else {
             state = .idle
+            return
+        }
+
+        guard isActive else {
+            // The dock may provide the losing Mac's network and power while its
+            // lid is closed. Release immediately, before detach puts it to sleep;
+            // the destination's peer request is only a secondary safety net.
+            let currentOperation = operationID
+            state = .releasing
+            bluetooth.release(targets) { [weak self] success in
+                guard let self, self.operationID == currentOperation else { return }
+                self.state = success ? .idle : .failed
+            }
             return
         }
 
