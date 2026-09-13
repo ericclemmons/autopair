@@ -81,6 +81,18 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .idle)
     }
 
+    func testWillSleepRetainsDevicesWhenOwnershipTriggerIsStillActive() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
+        var acknowledged = false
+
+        controller.prepareForSleep(isOwnershipActive: true) { acknowledged = true }
+
+        XCTAssertTrue(acknowledged)
+        XCTAssertTrue(bluetooth.released.isEmpty)
+    }
+
     func testFailedAcquisitionRetriesWhileOwnershipRemainsActive() {
         let bluetooth = BluetoothMock()
         let peers = PeerMock()

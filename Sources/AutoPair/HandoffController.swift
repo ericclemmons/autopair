@@ -96,7 +96,12 @@ final class HandoffController {
         }
     }
 
-    func prepareForSleep(completion: @escaping () -> Void) {
+    func prepareForSleep(isOwnershipActive: Bool = false, completion: @escaping () -> Void) {
+        guard !isOwnershipActive else {
+            Diagnostics.record("sleep announced while ownership trigger is active; retaining devices")
+            completion()
+            return
+        }
         retryWorkItem?.cancel()
         operationID = UUID()
         let targets = addresses()

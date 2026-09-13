@@ -47,7 +47,8 @@ Mac B pairs and connects through Apple's native IOBluetooth framework
 The losing Mac releases when its trigger disappears. For a closed-lid Mac, AutoPair
 also participates in macOS power notifications: it briefly delays the final sleep
 acknowledgement until the selected devices are released (with a 12-second safety
-limit). The winning Mac also requests peer release and retries acquisition if the old
+limit). A Mac whose ownership trigger remains active keeps its devices through transient
+clamshell/login sleep notifications. The winning Mac requests peer release and retries acquisition if the old
 Mac becomes unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),

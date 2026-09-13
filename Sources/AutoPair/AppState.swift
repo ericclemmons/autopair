@@ -151,7 +151,16 @@ final class AppState {
     private func setupServices() {
         sleepMonitor.onWillSleep = { [weak self] completion in
             guard let self else { completion(); return }
-            self.handoff.prepareForSleep(completion: completion)
+            // Dock attachment can itself produce a transient sleep notification
+            // during clamshell/login transitions. Let IOKit detach events settle,
+            // then release only if this Mac has actually lost ownership.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { completion(); return }
+                self.handoff.prepareForSleep(
+                    isOwnershipActive: self.trigger?.isActive == true,
+                    completion: completion
+                )
+            }
         }
         sleepMonitor.start()
         bluetooth.onConnectionChanged = { [weak self] in

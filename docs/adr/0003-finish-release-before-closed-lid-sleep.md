@@ -14,8 +14,11 @@ the process before the pairing was removed.
 ## Decision
 
 - Register for macOS system-power notifications with `IORegisterForSystemPower`.
-- On `SystemWillSleep`, delay the required acknowledgement while the selected devices
-  are released, with a 12-second failsafe that always allows sleep.
+- On `SystemWillSleep`, give hardware-detach events 500 ms to settle. If the ownership
+  trigger is inactive, delay the required acknowledgement while selected devices are
+  released, with a 12-second failsafe that always allows sleep. If the trigger remains
+  active, retain the devices; dock attachment can itself cause a transient clamshell
+  sleep notification during login.
 - Keep hardware-detach release as the earliest path.
 - Retry acquisition on the destination after 2, 5, 10, and 15 seconds.
 - Persist a small rolling diagnostics timeline and expose it through **Copy Diagnostics**.
