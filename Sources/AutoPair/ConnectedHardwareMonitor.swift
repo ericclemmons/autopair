@@ -111,6 +111,8 @@ final class ConnectedHardwareMonitor: OwnershipTrigger {
     private(set) var matchingRegistryIDs: Set<UInt64> = []
     private var notificationPort: IONotificationPortRef?
     private var iterators: [io_iterator_t] = []
+    private var publishedActive = false
+    private var inactiveWorkItem: DispatchWorkItem?
 
     init(identity: HardwareIdentity) { self.identity = identity }
 
@@ -142,11 +144,14 @@ final class ConnectedHardwareMonitor: OwnershipTrigger {
     }
 
     func stop() {
+        inactiveWorkItem?.cancel()
+        inactiveWorkItem = nil
         iterators.forEach { IOObjectRelease($0) }
         iterators = []
         if let notificationPort { IONotificationPortDestroy(notificationPort) }
         notificationPort = nil
         matchingRegistryIDs = []
+        publishedActive = false
     }
 
     fileprivate func drain(_ iterator: io_iterator_t, added: Bool) {
@@ -164,9 +169,24 @@ final class ConnectedHardwareMonitor: OwnershipTrigger {
                 matchingRegistryIDs.remove(registryID)
             }
         }
-        if wasActive != isActive {
-            Diagnostics.record("hardware trigger \(identity.title) is \(isActive ? "active" : "inactive")")
-            onChange?(isActive, activeName)
+        guard wasActive != isActive else { return }
+        if isActive {
+            inactiveWorkItem?.cancel()
+            inactiveWorkItem = nil
+            guard !publishedActive else { return }
+            publishedActive = true
+            Diagnostics.record("hardware trigger \(identity.title) is active")
+            onChange?(true, activeName)
+        } else if publishedActive {
+            inactiveWorkItem?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.isActive, self.publishedActive else { return }
+                self.publishedActive = false
+                Diagnostics.record("hardware trigger \(self.identity.title) is inactive")
+                self.onChange?(false, nil)
+            }
+            inactiveWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
         }
     }
 

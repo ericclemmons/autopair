@@ -50,6 +50,9 @@ acknowledgement until the selected devices are released (with a 12-second safety
 limit). A Mac whose ownership trigger remains active keeps its devices through transient
 clamshell/login sleep notifications. The winning Mac requests peer release and retries acquisition if the old
 Mac becomes unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
+Transient dock re-enumeration is debounced, duplicate ownership events are ignored, and
+a Mac with an active physical trigger will not honor a peer's release request. AutoPair
+also re-evaluates current ownership after wake instead of preserving a stale menu state.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),
 not polling. AutoPair records serial number when available, otherwise vendor/product

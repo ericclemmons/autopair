@@ -22,6 +22,12 @@ the process before the pairing was removed.
 - Keep hardware-detach release as the earliest path.
 - Retry acquisition on the destination after 2, 5, 10, and 15 seconds.
 - Persist a small rolling diagnostics timeline and expose it through **Copy Diagnostics**.
+- Debounce hardware removal for 750 ms so transient dock re-enumeration does not publish
+  ownership loss; the raw IOKit state remains available to the sleep path immediately.
+- Treat repeated ownership values as idempotent and cooperatively cancel stale native
+  Bluetooth work when ownership truly changes.
+- Refuse peer release requests while the local physical ownership trigger is active.
+- Reconcile current ownership after system wake.
 
 ## Consequences
 

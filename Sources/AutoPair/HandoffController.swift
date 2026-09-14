@@ -27,10 +27,11 @@ final class HandoffController {
     private var operationID = UUID()
     private var retryWorkItem: DispatchWorkItem?
     private let retryDelays: [TimeInterval]
+    private var desiredOwnership: Bool?
 
     init(bluetooth: BluetoothControlling, peers: PeerCoordinating,
          addresses: @escaping () -> [String],
-         retryDelays: [TimeInterval] = [2, 5, 10, 15]) {
+         retryDelays: [TimeInterval] = [2, 5]) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
@@ -38,7 +39,22 @@ final class HandoffController {
     }
 
     func ownershipChanged(isActive: Bool) {
+        guard desiredOwnership != isActive else {
+            Diagnostics.record("duplicate ownership=\(isActive) ignored")
+            return
+        }
+        desiredOwnership = isActive
+        beginOwnershipChange(isActive: isActive)
+    }
+
+    func retryOwnership(isActive: Bool) {
+        desiredOwnership = isActive
+        beginOwnershipChange(isActive: isActive)
+    }
+
+    private func beginOwnershipChange(isActive: Bool) {
         retryWorkItem?.cancel()
+        bluetooth.cancelPendingOperations()
         operationID = UUID()
         let targets = addresses()
         guard !targets.isEmpty else {
@@ -103,6 +119,7 @@ final class HandoffController {
             return
         }
         retryWorkItem?.cancel()
+        bluetooth.cancelPendingOperations()
         operationID = UUID()
         let targets = addresses()
         guard !targets.isEmpty else { completion(); return }
@@ -114,8 +131,15 @@ final class HandoffController {
         }
     }
 
-    func releaseForPeer(_ addresses: [String], completion: @escaping (Bool) -> Void) {
+    func releaseForPeer(_ addresses: [String], isOwnershipActive: Bool,
+                        completion: @escaping (Bool) -> Void) {
+        guard !isOwnershipActive else {
+            Diagnostics.record("peer release refused because local ownership trigger is active")
+            completion(false)
+            return
+        }
         retryWorkItem?.cancel()
+        bluetooth.cancelPendingOperations()
         operationID = UUID() // cancel a local acquisition before releasing
         bluetooth.release(addresses, completion: completion)
         state = .idle

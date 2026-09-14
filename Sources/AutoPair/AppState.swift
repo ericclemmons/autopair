@@ -145,7 +145,7 @@ final class AppState {
     func forgetComputer(_ id: String) { peers.forgetComputer(id) }
 
     func retryHandoff() {
-        handoff.ownershipChanged(isActive: trigger?.isActive == true)
+        handoff.retryOwnership(isActive: trigger?.isActive == true)
     }
 
     private func setupServices() {
@@ -161,6 +161,11 @@ final class AppState {
                     completion: completion
                 )
             }
+        }
+        sleepMonitor.onDidWake = { [weak self] in
+            guard let self else { return }
+            Diagnostics.record("system woke; reconciling current ownership")
+            self.handoff.retryOwnership(isActive: self.trigger?.isActive == true)
         }
         sleepMonitor.start()
         bluetooth.onConnectionChanged = { [weak self] in
@@ -181,7 +186,9 @@ final class AppState {
             guard let self else { completion(false); return }
             let allowed = requested.filter { self.savedAddresses.contains($0) }
             guard !allowed.isEmpty else { completion(false); return }
-            self.handoff.releaseForPeer(allowed) { [weak self] success in
+            self.handoff.releaseForPeer(
+                allowed, isOwnershipActive: self.trigger?.isActive == true
+            ) { [weak self] success in
                 self?.refreshDevices()
                 completion(success)
             }

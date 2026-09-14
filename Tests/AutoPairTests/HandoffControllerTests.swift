@@ -58,11 +58,35 @@ final class HandoffControllerTests: XCTestCase {
         let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { [] })
         var result: Bool?
 
-        controller.releaseForPeer(["AA"], completion: { result = $0 })
+        controller.releaseForPeer(["AA"], isOwnershipActive: false, completion: { result = $0 })
         XCTAssertEqual(bluetooth.released, [["AA"]])
         bluetooth.releaseCompletion?(true)
 
         XCTAssertEqual(result, true)
+    }
+
+    func testDuplicateActiveSignalDoesNotRestartHandoff() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
+
+        controller.ownershipChanged(isActive: true)
+        controller.ownershipChanged(isActive: true)
+
+        XCTAssertEqual(peers.requested, [["AA"]])
+        XCTAssertEqual(bluetooth.cancellationCount, 1)
+    }
+
+    func testPeerCannotReleaseWhileLocalOwnershipTriggerIsActive() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
+        var result: Bool?
+
+        controller.releaseForPeer(["AA"], isOwnershipActive: true) { result = $0 }
+
+        XCTAssertEqual(result, false)
+        XCTAssertTrue(bluetooth.released.isEmpty)
     }
 
     func testWillSleepWaitsForBluetoothReleaseBeforeAcknowledging() {
@@ -110,10 +134,13 @@ final class HandoffControllerTests: XCTestCase {
 }
 
 private final class BluetoothMock: BluetoothControlling {
+    var cancellationCount = 0
     var acquired: [[String]] = []
     var released: [[String]] = []
     var acquireCompletion: ((Bool) -> Void)?
     var releaseCompletion: ((Bool) -> Void)?
+
+    func cancelPendingOperations() { cancellationCount += 1 }
 
     func acquire(_ addresses: [String], completion: @escaping (Bool) -> Void) {
         acquired.append(addresses)

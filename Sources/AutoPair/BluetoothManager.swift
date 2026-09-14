@@ -47,6 +47,7 @@ struct BluetoothDevice: Identifiable, Hashable {
 }
 
 protocol BluetoothControlling: AnyObject {
+    func cancelPendingOperations()
     func acquire(_ addresses: [String], completion: @escaping (Bool) -> Void)
     func release(_ addresses: [String], completion: @escaping (Bool) -> Void)
 }
@@ -59,6 +60,8 @@ final class BluetoothManager: NSObject, BluetoothControlling {
     private let queue = DispatchQueue(label: "com.ericclemmons.AutoPair.bluetooth", qos: .userInitiated)
     private var connectNotification: IOBluetoothUserNotification?
     private var disconnectNotifications: [String: IOBluetoothUserNotification] = [:]
+    private let generationLock = NSLock()
+    private var operationGeneration = 0
 
     override init() {
         super.init()
@@ -88,23 +91,57 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             }
     }
 
+    func cancelPendingOperations() {
+        generationLock.lock()
+        operationGeneration += 1
+        generationLock.unlock()
+    }
+
+    private func generationSnapshot() -> Int {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return operationGeneration
+    }
+
+    private func isCurrent(_ generation: Int) -> Bool {
+        generationLock.lock()
+        defer { generationLock.unlock() }
+        return operationGeneration == generation
+    }
+
     func acquire(_ addresses: [String], completion: @escaping (Bool) -> Void) {
+        let generation = generationSnapshot()
         queue.async {
+            guard self.isCurrent(generation) else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
             var success = true
-            for address in addresses where !self.acquireSync(address) { success = false }
-            DispatchQueue.main.async { completion(success) }
+            for address in addresses where self.isCurrent(generation) {
+                if !self.acquireSync(address, generation: generation) { success = false }
+            }
+            let current = self.isCurrent(generation)
+            DispatchQueue.main.async { completion(success && current) }
         }
     }
 
     func release(_ addresses: [String], completion: @escaping (Bool) -> Void) {
+        let generation = generationSnapshot()
         queue.async {
+            guard self.isCurrent(generation) else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
             var success = true
-            for address in addresses where !self.releaseSync(address) { success = false }
-            DispatchQueue.main.async { completion(success) }
+            for address in addresses where self.isCurrent(generation) {
+                if !self.releaseSync(address, generation: generation) { success = false }
+            }
+            let current = self.isCurrent(generation)
+            DispatchQueue.main.async { completion(success && current) }
         }
     }
 
-    private func acquireSync(_ address: String) -> Bool {
+    private func acquireSync(_ address: String, generation: Int) -> Bool {
         guard let initial = IOBluetoothDevice(addressString: address) else {
             log.error("Bluetooth: no device object for \(address)")
             return false
@@ -114,7 +151,7 @@ final class BluetoothManager: NSObject, BluetoothControlling {
 
         // Try a retained bond first. If it is stale after another Mac's handoff,
         // remove it before beginning native pairing.
-        if initial.isPaired(), connectAndVerify(initial) {
+        if initial.isPaired(), connectAndVerify(initial, generation: generation) {
             Diagnostics.record("Bluetooth acquire: retained pairing connected")
             return true
         }
@@ -123,18 +160,20 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             Thread.sleep(forTimeInterval: 0.5)
         }
 
-        guard let device = IOBluetoothDevice(addressString: address), pairSync(device) else {
+        guard isCurrent(generation),
+              let device = IOBluetoothDevice(addressString: address),
+              pairSync(device, generation: generation) else {
             log.error("Bluetooth: pairing failed for \(address)")
             Diagnostics.record("Bluetooth acquire: native pairing failed")
             return false
         }
-        let success = device.isConnected() || connectAndVerify(device)
+        let success = device.isConnected() || connectAndVerify(device, generation: generation)
         if !success { log.error("Bluetooth: connection failed after pairing for \(address)") }
         Diagnostics.record("Bluetooth acquire: post-pair connection \(success ? "succeeded" : "failed")")
         return success
     }
 
-    private func releaseSync(_ address: String) -> Bool {
+    private func releaseSync(_ address: String, generation: Int) -> Bool {
         guard let device = IOBluetoothDevice(addressString: address) else { return true }
         Diagnostics.record("Bluetooth release: paired=\(device.isPaired()), connected=\(device.isConnected())")
         guard device.isPaired() || device.isConnected() else { return true }
@@ -144,6 +183,7 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         }
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline {
+            guard isCurrent(generation) else { return false }
             if !device.isConnected() && !device.isPaired() {
                 Diagnostics.record("Bluetooth release: disconnected and pairing removed")
                 return true
@@ -162,27 +202,33 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         return true
     }
 
-    private func connectAndVerify(_ device: IOBluetoothDevice) -> Bool {
-        for attempt in 1...3 {
+    private func connectAndVerify(_ device: IOBluetoothDevice, generation: Int) -> Bool {
+        for attempt in 1...2 {
+            guard isCurrent(generation) else { return false }
             if device.openConnection() == kIOReturnSuccess {
-                let deadline = Date().addingTimeInterval(3)
+                let deadline = Date().addingTimeInterval(2)
                 while Date() < deadline {
+                    guard isCurrent(generation) else { return false }
                     if device.isConnected() { return true }
                     Thread.sleep(forTimeInterval: 0.1)
                 }
             }
-            if attempt < 3 { Thread.sleep(forTimeInterval: Double(attempt)) }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 1) }
         }
         return device.isConnected()
     }
 
-    private func pairSync(_ device: IOBluetoothDevice) -> Bool {
+    private func pairSync(_ device: IOBluetoothDevice, generation: Int) -> Bool {
         let semaphore = DispatchSemaphore(value: 0)
         var result = false
         var retainedPairer: IOBluetoothDevicePair?
         var retainedDelegate: NativePairDelegate?
 
         DispatchQueue.main.async {
+            guard self.isCurrent(generation) else {
+                semaphore.signal()
+                return
+            }
             guard let pairer = IOBluetoothDevicePair(device: device) else {
                 semaphore.signal()
                 return
@@ -197,7 +243,15 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             if pairer.start() != kIOReturnSuccess { semaphore.signal() }
         }
 
-        let completed = semaphore.wait(timeout: .now() + 15) == .success
+        let deadline = Date().addingTimeInterval(8)
+        var completed = false
+        while isCurrent(generation), Date() < deadline {
+            if semaphore.wait(timeout: .now() + 0.2) == .success {
+                completed = true
+                break
+            }
+        }
+        if !isCurrent(generation) { retainedPairer?.stop() }
         withExtendedLifetime(retainedPairer) {}
         withExtendedLifetime(retainedDelegate) {}
         return completed && result

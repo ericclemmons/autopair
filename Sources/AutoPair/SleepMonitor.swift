@@ -6,10 +6,12 @@ import IOKit.pwr_mgt
 // C error-system bit fields. Expanded values from IOMessage.h/IOReturn.h.
 private let messageCanSystemSleep: natural_t = 0xe0000270
 private let messageSystemWillSleep: natural_t = 0xe0000280
+private let messageSystemHasPoweredOn: natural_t = 0xe0000300
 
 /// Delays imminent sleep long enough to release selected Bluetooth devices.
 final class SleepMonitor {
     var onWillSleep: ((@escaping () -> Void) -> Void)?
+    var onDidWake: (() -> Void)?
     private var rootPort: io_connect_t = 0
     private var notificationPort: IONotificationPortRef?
     private var notifier: io_object_t = 0
@@ -49,6 +51,9 @@ final class SleepMonitor {
             if let onWillSleep { onWillSleep(finish) } else { finish() }
         case messageCanSystemSleep:
             IOAllowPowerChange(rootPort, token)
+        case messageSystemHasPoweredOn:
+            Diagnostics.record("system powered on")
+            onDidWake?()
         default:
             break
         }
