@@ -12,6 +12,7 @@ enum AutoPairApp {
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private weak var statusHeader: NSMenuItem?
     private let appState = AppState()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,6 +25,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let iconName = "link.circle.fill"
         #endif
         statusItem.button?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "AutoPair")
+        statusItem.button?.toolTip = "AutoPair: \(appState.statusText)"
+        appState.onStatusChange = { [weak self] in self?.updateStatusPresentation() }
 
         let menu = NSMenu()
         menu.delegate = self
@@ -41,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Header
         let header = NSMenuItem(title: "AutoPair: \(appState.statusText)", action: nil, keyEquivalent: "")
+        statusHeader = header
         header.isEnabled = false
         menu.addItem(header)
 
@@ -173,6 +177,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func copyDiagnostics() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(Diagnostics.contents(), forType: .string)
+    }
+
+    private func updateStatusPresentation() {
+        let title = "AutoPair: \(appState.statusText)"
+        statusItem?.button?.toolTip = title
+        statusHeader?.title = title
     }
 
     @objc private func showPairingCode() {

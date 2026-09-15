@@ -28,6 +28,8 @@ the process before the pairing was removed.
   Bluetooth work when ownership truly changes.
 - Refuse peer release requests while the local physical ownership trigger is active.
 - Reconcile current ownership after system wake.
+- Determine pairing success by polling macOS's paired/connected state after starting
+  native pairing; delegate completion is unreliable across clamshell wake transitions.
 
 ## Consequences
 

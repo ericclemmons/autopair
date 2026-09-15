@@ -205,7 +205,13 @@ final class BluetoothManager: NSObject, BluetoothControlling {
     private func connectAndVerify(_ device: IOBluetoothDevice, generation: Int) -> Bool {
         for attempt in 1...2 {
             guard isCurrent(generation) else { return false }
-            if device.openConnection() == kIOReturnSuccess {
+            let result = device.openConnection(
+                nil,
+                withPageTimeout: BluetoothHCIPageTimeout(0x0800),
+                authenticationRequired: false
+            )
+            Diagnostics.record("Bluetooth connect: attempt=\(attempt), result=\(result)")
+            if result == kIOReturnSuccess {
                 let deadline = Date().addingTimeInterval(2)
                 while Date() < deadline {
                     guard isCurrent(generation) else { return false }
@@ -220,9 +226,8 @@ final class BluetoothManager: NSObject, BluetoothControlling {
 
     private func pairSync(_ device: IOBluetoothDevice, generation: Int) -> Bool {
         let semaphore = DispatchSemaphore(value: 0)
-        var result = false
+        var startResult = kIOReturnError
         var retainedPairer: IOBluetoothDevicePair?
-        var retainedDelegate: NativePairDelegate?
 
         DispatchQueue.main.async {
             guard self.isCurrent(generation) else {
@@ -233,28 +238,35 @@ final class BluetoothManager: NSObject, BluetoothControlling {
                 semaphore.signal()
                 return
             }
-            let delegate = NativePairDelegate { success in
-                result = success
-                semaphore.signal()
-            }
             retainedPairer = pairer
-            retainedDelegate = delegate
-            pairer.delegate = delegate
-            if pairer.start() != kIOReturnSuccess { semaphore.signal() }
+            startResult = pairer.start()
+            semaphore.signal()
         }
 
-        let deadline = Date().addingTimeInterval(8)
-        var completed = false
-        while isCurrent(generation), Date() < deadline {
-            if semaphore.wait(timeout: .now() + 0.2) == .success {
-                completed = true
-                break
-            }
+        guard semaphore.wait(timeout: .now() + 2) == .success,
+              startResult == kIOReturnSuccess else {
+            Diagnostics.record("Bluetooth pair: start failed, result=\(startResult)")
+            return false
         }
-        if !isCurrent(generation) { retainedPairer?.stop() }
+
+        Diagnostics.record("Bluetooth pair: started; observing system state")
+        let deadline = Date().addingTimeInterval(10)
+        while isCurrent(generation), Date() < deadline {
+            if device.isPaired() || device.isConnected() {
+                Diagnostics.record("Bluetooth pair: macOS reports paired/connected")
+                withExtendedLifetime(retainedPairer) {}
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        if !isCurrent(generation) {
+            retainedPairer?.stop()
+            Diagnostics.record("Bluetooth pair: canceled")
+        } else {
+            Diagnostics.record("Bluetooth pair: observed-state timeout")
+        }
         withExtendedLifetime(retainedPairer) {}
-        withExtendedLifetime(retainedDelegate) {}
-        return completed && result
+        return device.isPaired() || device.isConnected()
     }
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification,
@@ -276,23 +288,5 @@ final class BluetoothManager: NSObject, BluetoothControlling {
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.values.forEach { $0.unregister() }
-    }
-}
-
-private final class NativePairDelegate: NSObject, IOBluetoothDevicePairDelegate {
-    private let completion: (Bool) -> Void
-    init(completion: @escaping (Bool) -> Void) { self.completion = completion }
-
-    func devicePairingUserConfirmationRequest(_ sender: Any!, numericValue: BluetoothNumericValue) {
-        (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
-    }
-
-    func devicePairingPINCodeRequest(_ sender: Any!) {
-        var pin = BluetoothPINCode()
-        (sender as? IOBluetoothDevicePair)?.replyPINCode(0, pinCode: &pin)
-    }
-
-    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
-        completion(error == kIOReturnSuccess)
     }
 }

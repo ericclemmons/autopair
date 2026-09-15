@@ -81,6 +81,7 @@ final class HandoffController {
         Diagnostics.record("trigger active; requesting peer release for \(targets.count) device(s)")
         peers.requestRelease(of: targets) { [weak self] released in
             guard let self, self.operationID == currentOperation else { return }
+            Diagnostics.record("peer release acknowledged=\(released)")
             if !released {
                 log.warning("Handoff: a peer did not acknowledge release; attempting acquisition")
             }

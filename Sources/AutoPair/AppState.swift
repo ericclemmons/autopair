@@ -22,6 +22,7 @@ final class AppState {
     var discoveredComputers: [ComputerInfo] = []
     var trustedComputers: [TrustedComputer] = []
     var handoffState: HandoffController.State = .idle
+    var onStatusChange: (() -> Void)?
     private(set) var triggerKind: OwnershipTriggerKind
     private(set) var selectedHardware: HardwareIdentity? = nil
 
@@ -177,6 +178,7 @@ final class AppState {
         handoff.onStateChange = { [weak self] state in
             self?.handoffState = state
             if state == .owned || state == .failed { self?.refreshDevices() }
+            self?.onStatusChange?()
         }
         peers.onComputersChanged = { [weak self] discovered, trusted in
             self?.discoveredComputers = discovered
