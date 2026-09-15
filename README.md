@@ -62,6 +62,10 @@ IDs, so the trigger survives restarts and changing ports. Docks exposing multipl
 components also get a vendor-level hardware choice. Existing CalDigit configuration
 is migrated automatically.
 
+External-display detection uses CoreGraphics display-reconfiguration events and its
+online-display list, with AppKit screen notifications as a fallback. Diagnostics include
+the display IDs and built-in/external classification observed inside AutoPair.
+
 Pairing codes expire after five minutes and allow five attempts. Successful pairing
 creates a random 256-bit shared secret. Handoff messages are authenticated with
 HMAC-SHA256, expire after 60 seconds, and include replay-protected nonces. Unpaired

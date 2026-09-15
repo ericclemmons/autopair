@@ -33,7 +33,7 @@ Menu bar app with no SwiftUI views — everything is `AppKit` + `NSMenu`. Entry 
 **Key files:**
 - `AppState.swift` — composition root; persists selected devices and trigger.
 - `OwnershipTrigger.swift` — pluggable ownership signal protocol, enum, and factory.
-- `DisplayMonitor.swift` — external-display trigger using screen notifications.
+- `DisplayMonitor.swift` — external-display trigger using CoreGraphics reconfiguration events.
 - `ConnectedHardwareMonitor.swift` — generic USB/Thunderbolt IOKit trigger and scanner.
 - `SleepMonitor.swift` — delays imminent sleep briefly so release can finish.
 - `HandoffController.swift` — testable ordered release/acquire state machine.
