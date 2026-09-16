@@ -30,7 +30,9 @@ enum ComputerPairingError: LocalizedError {
 }
 
 private struct PeerMessage: Codable {
-    enum Action: String, Codable { case pair, paired, release, released }
+    enum Action: String, Codable {
+        case pair, paired, release, released, diagnostics, diagnosticsResult
+    }
     let action: Action
     let senderID: String
     let senderName: String
@@ -39,6 +41,7 @@ private struct PeerMessage: Codable {
     var timestamp: Int64? = nil
     var authentication: String? = nil
     var encryptedSecret: String? = nil
+    var diagnosticData: String? = nil
     var error: String? = nil
 }
 
@@ -290,6 +293,52 @@ final class PeerManager: PeerCoordinating {
         }
     }
 
+    func requestDiagnostics(completion: @escaping ([String: String]) -> Void) {
+        queue.async {
+            let computers = Array(self.trusted.values)
+            guard !computers.isEmpty else {
+                DispatchQueue.main.async { completion([:]) }
+                return
+            }
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var results: [String: String] = [:]
+            for computer in computers {
+                guard let endpoint = self.endpoints[computer.id]?.endpoint else {
+                    results[computer.name] =
+                        "Unavailable — this Mac may be sleeping, offline, or running an older AutoPair."
+                    continue
+                }
+                group.enter()
+                let nonce = PeerCrypto.randomData(count: 16).base64EncodedString()
+                let timestamp = Int64(Date().timeIntervalSince1970)
+                let signature = PeerCrypto.signature(
+                    action: .diagnostics, senderID: self.instanceID, addresses: [],
+                    timestamp: timestamp, nonce: nonce, secret: computer.secret
+                )
+                let request = PeerMessage(
+                    action: .diagnostics, senderID: self.instanceID,
+                    senderName: self.computerName, addresses: [], nonce: nonce,
+                    timestamp: timestamp, authentication: signature
+                )
+                self.exchange(request, with: endpoint) { response in
+                    let value = response.flatMap { message -> String? in
+                        guard self.authenticate(
+                            message, expectedAction: .diagnosticsResult, computer: computer
+                        ) else { return nil }
+                        return message.diagnosticData
+                    }
+                    lock.lock()
+                    results[computer.name] = value ??
+                        "Unavailable — this Mac may be sleeping, offline, or running an older AutoPair."
+                    lock.unlock()
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) { completion(results) }
+        }
+    }
+
     private func accept(_ connection: NWConnection) {
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -299,6 +348,7 @@ final class PeerManager: PeerCoordinating {
                     switch message.action {
                     case .pair: self.handlePair(message, on: connection)
                     case .release: self.handleRelease(message, on: connection)
+                    case .diagnostics: self.handleDiagnostics(message, on: connection)
                     default: connection.cancel()
                     }
                 }
@@ -376,6 +426,26 @@ final class PeerManager: PeerCoordinating {
                 self.send(response, on: connection) { _ in connection.cancel() }
             }
         }
+    }
+
+    private func handleDiagnostics(_ message: PeerMessage, on connection: NWConnection) {
+        guard let computer = trusted[message.senderID],
+              authenticate(message, expectedAction: .diagnostics, computer: computer) else {
+            connection.cancel()
+            return
+        }
+        let nonce = PeerCrypto.randomData(count: 16).base64EncodedString()
+        let timestamp = Int64(Date().timeIntervalSince1970)
+        let signature = PeerCrypto.signature(
+            action: .diagnosticsResult, senderID: instanceID, addresses: [],
+            timestamp: timestamp, nonce: nonce, secret: computer.secret
+        )
+        let response = PeerMessage(
+            action: .diagnosticsResult, senderID: instanceID, senderName: computerName,
+            addresses: [], nonce: nonce, timestamp: timestamp,
+            authentication: signature, diagnosticData: Diagnostics.contents(maxBytes: 48_000)
+        )
+        send(response, on: connection) { _ in connection.cancel() }
     }
 
     private func authenticate(_ message: PeerMessage, expectedAction: PeerMessage.Action,

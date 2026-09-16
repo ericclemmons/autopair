@@ -149,6 +149,19 @@ final class AppState {
         handoff.retryOwnership(isActive: trigger?.isActive == true)
     }
 
+    func collectDiagnostics(completion: @escaping (String) -> Void) {
+        let localName = thisComputer.name
+        let local = Diagnostics.contents()
+        peers.requestDiagnostics { remote in
+            var sections = ["===== \(localName) (This Mac) =====\n\(local)"]
+            for name in remote.keys.sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }) {
+                guard let contents = remote[name] else { continue }
+                sections.append("===== \(name) =====\n\(contents)")
+            }
+            completion(sections.joined(separator: "\n\n"))
+        }
+    }
+
     private func setupServices() {
         sleepMonitor.onWillSleep = { [weak self] completion in
             guard let self else { completion(); return }

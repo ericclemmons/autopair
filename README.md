@@ -78,8 +78,9 @@ AutoPair instances can be discovered for setup but cannot release devices.
 - Both Macs must be awake, running AutoPair, and on the same local network during
   initial computer pairing. Proactive release handles the closed-lid cable move later.
 - Apple Magic devices may need a click or key press to wake before pairing.
-- Choose **Copy Diagnostics** after a failed handoff to copy AutoPair's recent trigger,
-  sleep, release, and acquisition timeline for troubleshooting.
+- Choose **Collect Diagnostics from All Macs…** after a failed handoff to copy AutoPair's
+  recent trigger, sleep, release, and acquisition timelines from this Mac and every
+  reachable trusted Mac. Sleeping, offline, and older peers are marked unavailable.
 - AutoPair uses IOBluetooth's private `remove` selector to release a pairing. This is
   suitable for a directly distributed/notarized app, but not for the Mac App Store,
   and a future macOS release could change it.

@@ -129,7 +129,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let diagnostics = NSMenuItem(title: "Copy Diagnostics",
+        let diagnostics = NSMenuItem(title: "Collect Diagnostics from All Macs…",
                                      action: #selector(copyDiagnostics), keyEquivalent: "")
         diagnostics.target = self
         menu.addItem(diagnostics)
@@ -175,8 +175,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func copyDiagnostics() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(Diagnostics.contents(), forType: .string)
+        appState.collectDiagnostics { contents in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(contents, forType: .string)
+            self.showResult(
+                title: "Diagnostics Copied",
+                message: "Diagnostics from this Mac and reachable trusted Macs are on the clipboard."
+            )
+        }
     }
 
     private func updateStatusPresentation() {

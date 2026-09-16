@@ -35,7 +35,11 @@ enum Diagnostics {
         }
     }
 
-    static func contents() -> String {
-        queue.sync { (try? String(contentsOf: fileURL, encoding: .utf8)) ?? "No diagnostics yet." }
+    static func contents(maxBytes: Int? = nil) -> String {
+        queue.sync {
+            guard let data = try? Data(contentsOf: fileURL) else { return "No diagnostics yet." }
+            let selected = maxBytes.map { Data(data.suffix($0)) } ?? data
+            return String(decoding: selected, as: UTF8.self)
+        }
     }
 }
