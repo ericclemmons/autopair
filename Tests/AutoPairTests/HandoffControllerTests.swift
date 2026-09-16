@@ -112,7 +112,9 @@ final class HandoffControllerTests: XCTestCase {
         var acknowledged = false
 
         controller.ownershipChanged(isActive: true)
-        controller.prepareForSleep(isOwnershipActive: true) { acknowledged = true }
+        controller.prepareForSleep(
+            isOwnershipActive: true, isExternallyPowered: false
+        ) { acknowledged = true }
 
         XCTAssertTrue(acknowledged)
         XCTAssertTrue(bluetooth.released.isEmpty)
@@ -161,6 +163,29 @@ final class HandoffControllerTests: XCTestCase {
         bluetooth.releaseCompletion?(true)
         XCTAssertTrue(acknowledged)
         XCTAssertEqual(controller.state, .idle)
+    }
+
+    func testWillSleepRetainsStableOwnerWhileDockStillProvidesPower() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        var now = Date(timeIntervalSince1970: 1_000)
+        let controller = HandoffController(
+            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] },
+            now: { now }, sleepRetentionGrace: 10
+        )
+        var acknowledged = false
+
+        controller.ownershipChanged(isActive: true)
+        peers.releaseCompletion?(true)
+        bluetooth.acquireCompletion?(true)
+        now.addTimeInterval(11)
+        controller.prepareForSleep(
+            isOwnershipActive: true, isExternallyPowered: true
+        ) { acknowledged = true }
+
+        XCTAssertTrue(acknowledged)
+        XCTAssertEqual(controller.state, .owned)
+        XCTAssertTrue(bluetooth.released.isEmpty)
     }
 
     func testFailedAcquisitionRetriesWhileOwnershipRemainsActive() {

@@ -170,8 +170,14 @@ final class AppState {
             // then release only if this Mac has actually lost ownership.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 guard let self else { completion(); return }
+                let externallyPowered = SystemPowerSource.isExternallyPowered
+                Diagnostics.record(
+                    "pre-sleep power source: " +
+                    (externallyPowered.map { $0 ? "external" : "battery" } ?? "unknown")
+                )
                 self.handoff.prepareForSleep(
                     isOwnershipActive: self.trigger?.isActive == true,
+                    isExternallyPowered: externallyPowered,
                     completion: completion
                 )
             }

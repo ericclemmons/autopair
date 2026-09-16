@@ -146,13 +146,14 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             log.error("Bluetooth: no device object for \(address)")
             return false
         }
-        Diagnostics.record("Bluetooth acquire: paired=\(initial.isPaired()), connected=\(initial.isConnected())")
+        let label = "\(initial.name ?? "Unknown device") [\(address)]"
+        Diagnostics.record("Bluetooth acquire \(label): paired=\(initial.isPaired()), connected=\(initial.isConnected())")
         if initial.isConnected() { return true }
 
         // Try a retained bond first. If it is stale after another Mac's handoff,
         // remove it before beginning native pairing.
         if initial.isPaired(), connectAndVerify(initial, generation: generation) {
-            Diagnostics.record("Bluetooth acquire: retained pairing connected")
+            Diagnostics.record("Bluetooth acquire \(label): retained pairing connected")
             return true
         }
         if initial.isPaired() {
@@ -164,18 +165,19 @@ final class BluetoothManager: NSObject, BluetoothControlling {
               let device = IOBluetoothDevice(addressString: address),
               pairSync(device, generation: generation) else {
             log.error("Bluetooth: pairing failed for \(address)")
-            Diagnostics.record("Bluetooth acquire: native pairing failed")
+            Diagnostics.record("Bluetooth acquire \(label): native pairing failed")
             return false
         }
         let success = device.isConnected() || connectAndVerify(device, generation: generation)
         if !success { log.error("Bluetooth: connection failed after pairing for \(address)") }
-        Diagnostics.record("Bluetooth acquire: post-pair connection \(success ? "succeeded" : "failed")")
+        Diagnostics.record("Bluetooth acquire \(label): post-pair connection \(success ? "succeeded" : "failed")")
         return success
     }
 
     private func releaseSync(_ address: String, generation: Int) -> Bool {
         guard let device = IOBluetoothDevice(addressString: address) else { return true }
-        Diagnostics.record("Bluetooth release: paired=\(device.isPaired()), connected=\(device.isConnected())")
+        let label = "\(device.name ?? "Unknown device") [\(address)]"
+        Diagnostics.record("Bluetooth release \(label): paired=\(device.isPaired()), connected=\(device.isConnected())")
         guard device.isPaired() || device.isConnected() else { return true }
         guard remove(device) else {
             log.error("Bluetooth: native remove unavailable for \(address)")
@@ -185,13 +187,13 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         while Date() < deadline {
             guard isCurrent(generation) else { return false }
             if !device.isConnected() && !device.isPaired() {
-                Diagnostics.record("Bluetooth release: disconnected and pairing removed")
+                Diagnostics.record("Bluetooth release \(label): disconnected and pairing removed")
                 return true
             }
             Thread.sleep(forTimeInterval: 0.1)
         }
         let disconnected = !device.isConnected()
-        Diagnostics.record("Bluetooth release: deadline reached, disconnected=\(disconnected), paired=\(device.isPaired())")
+        Diagnostics.record("Bluetooth release \(label): deadline reached, disconnected=\(disconnected), paired=\(device.isPaired())")
         return disconnected
     }
 

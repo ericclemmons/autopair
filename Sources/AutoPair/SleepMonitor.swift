@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import IOKit.ps
 import IOKit.pwr_mgt
 
 // These public IOKit macros are not imported into Swift because they compose
@@ -7,6 +8,15 @@ import IOKit.pwr_mgt
 private let messageCanSystemSleep: natural_t = 0xe0000270
 private let messageSystemWillSleep: natural_t = 0xe0000280
 private let messageSystemHasPoweredOn: natural_t = 0xe0000300
+
+enum SystemPowerSource {
+    static var isExternallyPowered: Bool? {
+        guard let snapshot = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let source = IOPSGetProvidingPowerSourceType(snapshot)?.takeUnretainedValue()
+        else { return nil }
+        return (source as String) == kIOPSACPowerValue
+    }
+}
 
 /// Delays imminent sleep long enough to release selected Bluetooth devices.
 final class SleepMonitor {

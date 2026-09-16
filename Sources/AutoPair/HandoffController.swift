@@ -140,13 +140,22 @@ final class HandoffController {
         DispatchQueue.main.asyncAfter(deadline: .now() + recoveryDelay, execute: work)
     }
 
-    func prepareForSleep(isOwnershipActive: Bool = false, completion: @escaping () -> Void) {
+    func prepareForSleep(isOwnershipActive: Bool = false,
+                         isExternallyPowered: Bool? = nil,
+                         completion: @escaping () -> Void) {
         let acquisitionInProgress = state == .waitingForRelease || state == .acquiring
         let ownershipAge = ownershipEstablishedAt.map { now().timeIntervalSince($0) }
         let recentlyAcquired = ownershipAge.map { $0 < sleepRetentionGrace } == true
-        guard !(isOwnershipActive && (acquisitionInProgress || recentlyAcquired)) else {
-            let reason = acquisitionInProgress ? "acquisition is in progress" :
-                "ownership was established \(Int(ownershipAge ?? 0))s ago"
+        let dockStillPowered = isExternallyPowered == true
+        guard !(isOwnershipActive && (acquisitionInProgress || recentlyAcquired || dockStillPowered)) else {
+            let reason: String
+            if acquisitionInProgress {
+                reason = "acquisition is in progress"
+            } else if recentlyAcquired {
+                reason = "ownership was established \(Int(ownershipAge ?? 0))s ago"
+            } else {
+                reason = "external power is still connected"
+            }
             Diagnostics.record("sleep announced while trigger is active; retaining devices because \(reason)")
             completion()
             return

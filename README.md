@@ -49,8 +49,9 @@ also participates in macOS power notifications: it briefly delays the final slee
 acknowledgement until the selected devices are released (with a 12-second safety
 limit). A destination that is still acquiring, or acquired within the last 10 seconds,
 keeps its devices through transient clamshell/login sleep notifications. A stable owner
-releases before sleeping even if macOS has not yet removed the external display from its
-online-display list. The winning Mac requests peer release and retries acquisition if the old
+also keeps its pairing through ordinary sleep while the dock still supplies power. If
+dock power disappears, it releases before sleep even when macOS has not yet removed the
+external display from its online-display list. The winning Mac requests peer release if the old
 Mac becomes unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 Transient dock re-enumeration is debounced, duplicate ownership events are ignored, and
 a Mac with an active physical trigger will not honor a peer's release request. AutoPair
