@@ -56,7 +56,9 @@ Transient dock re-enumeration is debounced, duplicate ownership events are ignor
 a Mac with an active physical trigger will not honor a peer's release request. AutoPair
 also re-evaluates current ownership after wake instead of preserving a stale menu state.
 Pairing completion is based on macOS's observed device state rather than a delegate
-callback, and an open menu updates its handoff status live.
+callback, and an open menu updates its handoff status live. If the initial pairing burst
+fails while the ownership trigger remains active, AutoPair starts a new coordinated
+handoff after a 10-second cooldown and keeps recovering until ownership changes.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),
 not polling. AutoPair records serial number when available, otherwise vendor/product

@@ -27,6 +27,7 @@ final class HandoffController {
     private var operationID = UUID()
     private var retryWorkItem: DispatchWorkItem?
     private let retryDelays: [TimeInterval]
+    private let recoveryDelay: TimeInterval
     private let now: () -> Date
     private let sleepRetentionGrace: TimeInterval
     private var desiredOwnership: Bool?
@@ -35,12 +36,14 @@ final class HandoffController {
     init(bluetooth: BluetoothControlling, peers: PeerCoordinating,
          addresses: @escaping () -> [String],
          retryDelays: [TimeInterval] = [2, 5],
+         recoveryDelay: TimeInterval = 10,
          now: @escaping () -> Date = Date.init,
          sleepRetentionGrace: TimeInterval = 10) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
         self.retryDelays = retryDelays
+        self.recoveryDelay = recoveryDelay
         self.now = now
         self.sleepRetentionGrace = sleepRetentionGrace
     }
@@ -119,8 +122,22 @@ final class HandoffController {
                 Diagnostics.record("acquisition failed after \(attempt + 1) attempts")
                 self.ownershipEstablishedAt = nil
                 self.state = .failed
+                self.scheduleAutomaticRecovery(for: operation)
             }
         }
+    }
+
+    private func scheduleAutomaticRecovery(for operation: UUID) {
+        guard desiredOwnership == true else { return }
+        Diagnostics.record("automatic recovery scheduled in \(Int(recoveryDelay))s")
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.operationID == operation,
+                  self.desiredOwnership == true else { return }
+            Diagnostics.record("automatic recovery restarting handoff")
+            self.beginOwnershipChange(isActive: true)
+        }
+        retryWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + recoveryDelay, execute: work)
     }
 
     func prepareForSleep(isOwnershipActive: Bool = false, completion: @escaping () -> Void) {

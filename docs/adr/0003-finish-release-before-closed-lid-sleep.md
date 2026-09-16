@@ -22,7 +22,9 @@ the process before the pairing was removed.
   successful acquisition. This covers the destination's transient clamshell/login
   sleep notification without letting a stable source sleep while holding the devices.
 - Keep hardware-detach release as the earliest path.
-- Retry acquisition on the destination after 2, 5, 10, and 15 seconds.
+- Retry acquisition on the destination after 2 and 5 seconds. If the burst fails while
+  the physical ownership trigger remains active, start a fresh coordinated handoff after
+  a 10-second cooldown; cancel that recovery immediately when ownership changes.
 - Persist a small rolling diagnostics timeline and expose it through **Copy Diagnostics**.
 - Debounce hardware removal for 750 ms so transient dock re-enumeration does not publish
   ownership loss; the raw IOKit state remains available to the sleep path immediately.
@@ -37,5 +39,6 @@ the process before the pairing was removed.
 
 Closed-lid cable moves get a final release opportunity even when display or hardware
 detach notification loses the race. Sleep can be delayed by up to 12 seconds during a handoff.
-The destination may keep attempting Bluetooth acquisition for longer before reporting
-failure. The actual two-Mac clamshell transition remains a hardware-in-the-loop test.
+The destination keeps attempting Bluetooth acquisition at a low frequency while its
+trigger remains active, so waking a device after the first burst no longer requires a
+manual retry. The actual two-Mac clamshell transition remains a hardware-in-the-loop test.
