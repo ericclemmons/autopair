@@ -14,11 +14,13 @@ the process before the pairing was removed.
 ## Decision
 
 - Register for macOS system-power notifications with `IORegisterForSystemPower`.
-- On `SystemWillSleep`, give hardware-detach events 500 ms to settle. If the ownership
-  trigger is inactive, delay the required acknowledgement while selected devices are
-  released, with a 12-second failsafe that always allows sleep. If the trigger remains
-  active, retain the devices; dock attachment can itself cause a transient clamshell
-  sleep notification during login.
+- On `SystemWillSleep`, give hardware-detach events 500 ms to settle, then delay the
+  required acknowledgement while selected devices are released, with a 12-second
+  failsafe that always allows sleep. Display removal can arrive only after wake, so an
+  active trigger does not by itself prove this Mac should retain ownership.
+- Retain devices only while acquisition is in progress or for 10 seconds after a
+  successful acquisition. This covers the destination's transient clamshell/login
+  sleep notification without letting a stable source sleep while holding the devices.
 - Keep hardware-detach release as the earliest path.
 - Retry acquisition on the destination after 2, 5, 10, and 15 seconds.
 - Persist a small rolling diagnostics timeline and expose it through **Copy Diagnostics**.
@@ -33,7 +35,7 @@ the process before the pairing was removed.
 
 ## Consequences
 
-Closed-lid cable moves get a final release opportunity even when the hardware-detach
-callback loses the race. Sleep can be delayed by up to 12 seconds during a handoff.
+Closed-lid cable moves get a final release opportunity even when display or hardware
+detach notification loses the race. Sleep can be delayed by up to 12 seconds during a handoff.
 The destination may keep attempting Bluetooth acquisition for longer before reporting
 failure. The actual two-Mac clamshell transition remains a hardware-in-the-loop test.

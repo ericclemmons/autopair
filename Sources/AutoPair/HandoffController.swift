@@ -27,15 +27,22 @@ final class HandoffController {
     private var operationID = UUID()
     private var retryWorkItem: DispatchWorkItem?
     private let retryDelays: [TimeInterval]
+    private let now: () -> Date
+    private let sleepRetentionGrace: TimeInterval
     private var desiredOwnership: Bool?
+    private var ownershipEstablishedAt: Date?
 
     init(bluetooth: BluetoothControlling, peers: PeerCoordinating,
          addresses: @escaping () -> [String],
-         retryDelays: [TimeInterval] = [2, 5]) {
+         retryDelays: [TimeInterval] = [2, 5],
+         now: @escaping () -> Date = Date.init,
+         sleepRetentionGrace: TimeInterval = 10) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
         self.retryDelays = retryDelays
+        self.now = now
+        self.sleepRetentionGrace = sleepRetentionGrace
     }
 
     func ownershipChanged(isActive: Bool) {
@@ -67,6 +74,7 @@ final class HandoffController {
             // lid is closed. Release immediately, before detach puts it to sleep;
             // the destination's peer request is only a secondary safety net.
             let currentOperation = operationID
+            ownershipEstablishedAt = nil
             state = .releasing
             Diagnostics.record("trigger inactive; releasing \(targets.count) device(s)")
             bluetooth.release(targets) { [weak self] success in
@@ -97,6 +105,7 @@ final class HandoffController {
             guard let self, self.operationID == operation else { return }
             if success {
                 Diagnostics.record("acquisition succeeded")
+                self.ownershipEstablishedAt = self.now()
                 self.state = .owned
             } else if attempt < self.retryDelays.count {
                 let delay = self.retryDelays[attempt]
@@ -108,20 +117,30 @@ final class HandoffController {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             } else {
                 Diagnostics.record("acquisition failed after \(attempt + 1) attempts")
+                self.ownershipEstablishedAt = nil
                 self.state = .failed
             }
         }
     }
 
     func prepareForSleep(isOwnershipActive: Bool = false, completion: @escaping () -> Void) {
-        guard !isOwnershipActive else {
-            Diagnostics.record("sleep announced while ownership trigger is active; retaining devices")
+        let acquisitionInProgress = state == .waitingForRelease || state == .acquiring
+        let ownershipAge = ownershipEstablishedAt.map { now().timeIntervalSince($0) }
+        let recentlyAcquired = ownershipAge.map { $0 < sleepRetentionGrace } == true
+        guard !(isOwnershipActive && (acquisitionInProgress || recentlyAcquired)) else {
+            let reason = acquisitionInProgress ? "acquisition is in progress" :
+                "ownership was established \(Int(ownershipAge ?? 0))s ago"
+            Diagnostics.record("sleep announced while trigger is active; retaining devices because \(reason)")
             completion()
             return
+        }
+        if isOwnershipActive {
+            Diagnostics.record("sleep announced for stable owner; releasing before sleep despite active trigger")
         }
         retryWorkItem?.cancel()
         bluetooth.cancelPendingOperations()
         operationID = UUID()
+        ownershipEstablishedAt = nil
         let targets = addresses()
         guard !targets.isEmpty else { completion(); return }
         state = .releasing
@@ -142,6 +161,7 @@ final class HandoffController {
         retryWorkItem?.cancel()
         bluetooth.cancelPendingOperations()
         operationID = UUID() // cancel a local acquisition before releasing
+        ownershipEstablishedAt = nil
         bluetooth.release(addresses, completion: completion)
         state = .idle
     }
