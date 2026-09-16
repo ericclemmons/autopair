@@ -81,6 +81,9 @@ AutoPair instances can be discovered for setup but cannot release devices.
 - Both Macs must be awake, running AutoPair, and on the same local network during
   initial computer pairing. Proactive release handles the closed-lid cable move later.
 - Apple Magic devices may need a click or key press to wake before pairing.
+- Legacy saved addresses whose Bluetooth metadata is no longer available appear as
+  **Unknown Saved Device** so they can be removed instead of silently participating
+  in handoffs.
 - Choose **Collect Diagnostics from All Macs…** after a failed handoff to copy AutoPair's
   recent trigger, sleep, release, and acquisition timelines from this Mac and every
   reachable trusted Mac. Sleeping, offline, and older peers are marked unavailable.

@@ -14,6 +14,19 @@ struct SavedDeviceInfo: Codable {
     }
 }
 
+enum DeviceSelection {
+    static func menuDevices(addresses: Set<String>, liveDevices: [BluetoothDevice],
+                            savedInfo: [String: SavedDeviceInfo]) -> [BluetoothDevice] {
+        let liveByAddress = Dictionary(uniqueKeysWithValues: liveDevices.map { ($0.address, $0) })
+        return addresses.sorted().map { address in
+            liveByAddress[address] ?? savedInfo[address]?.toBluetoothDevice() ?? BluetoothDevice(
+                address: address, name: "Unknown Saved Device",
+                majorClass: 0, minorClass: 0
+            )
+        }
+    }
+}
+
 @Observable
 final class AppState {
     var pairedDevices: [BluetoothDevice] = []
@@ -27,10 +40,9 @@ final class AppState {
     private(set) var selectedHardware: HardwareIdentity? = nil
 
     var menuSavedDevices: [BluetoothDevice] {
-        let liveByAddress = Dictionary(uniqueKeysWithValues: pairedDevices.map { ($0.address, $0) })
-        return savedAddresses.sorted().compactMap { address in
-            liveByAddress[address] ?? savedDeviceInfo[address]?.toBluetoothDevice()
-        }
+        DeviceSelection.menuDevices(
+            addresses: savedAddresses, liveDevices: pairedDevices, savedInfo: savedDeviceInfo
+        )
     }
 
     var statusText: String {
@@ -85,6 +97,7 @@ final class AppState {
         loadSaved()
         refreshDevices()
         backfillDeviceInfo()
+        recordSelectedDevices()
         setupServices()
         configureTrigger(triggerKind)
         log.info("AppState: init, trigger=\(self.triggerKind.rawValue), saved=\(self.savedAddresses.count)")
@@ -108,6 +121,7 @@ final class AppState {
             }
         }
         persistSaved()
+        recordSelectedDevices()
     }
 
     func isDeviceSaved(_ address: String) -> Bool { savedAddresses.contains(address) }
@@ -273,6 +287,12 @@ final class AppState {
         if let data = try? JSONEncoder().encode(savedDeviceInfo) {
             UserDefaults.standard.set(data, forKey: savedInfoKey)
         }
+    }
+
+    private func recordSelectedDevices() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let devices = menuSavedDevices.map { "\($0.name) [\($0.address)]" }.joined(separator: ", ")
+        Diagnostics.record("configuration v\(version): selected devices=\(devices.isEmpty ? "none" : devices)")
     }
 
     deinit {
