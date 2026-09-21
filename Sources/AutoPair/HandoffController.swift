@@ -146,22 +146,30 @@ final class HandoffController {
         let acquisitionInProgress = state == .waitingForRelease || state == .acquiring
         let ownershipAge = ownershipEstablishedAt.map { now().timeIntervalSince($0) }
         let recentlyAcquired = ownershipAge.map { $0 < sleepRetentionGrace } == true
-        let dockStillPowered = isExternallyPowered == true
-        guard !(isOwnershipActive && (acquisitionInProgress || recentlyAcquired || dockStillPowered)) else {
+        let shouldRetain: Bool
+        switch isExternallyPowered {
+        case true?: shouldRetain = true
+        case false?: shouldRetain = false
+        case nil: shouldRetain = acquisitionInProgress || recentlyAcquired
+        }
+        guard !(isOwnershipActive && shouldRetain) else {
             let reason: String
-            if acquisitionInProgress {
+            if isExternallyPowered == true {
+                reason = "external power is still connected"
+            } else if acquisitionInProgress {
                 reason = "acquisition is in progress"
             } else if recentlyAcquired {
                 reason = "ownership was established \(Int(ownershipAge ?? 0))s ago"
             } else {
-                reason = "external power is still connected"
+                reason = "ownership remains local"
             }
             Diagnostics.record("sleep announced while trigger is active; retaining devices because \(reason)")
             completion()
             return
         }
         if isOwnershipActive {
-            Diagnostics.record("sleep announced for stable owner; releasing before sleep despite active trigger")
+            let reason = isExternallyPowered == false ? "battery power" : "unconfirmed dock power"
+            Diagnostics.record("sleep announced with \(reason); releasing before sleep despite active trigger")
         }
         retryWorkItem?.cancel()
         bluetooth.cancelPendingOperations()

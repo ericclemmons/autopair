@@ -105,7 +105,22 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .idle)
     }
 
-    func testWillSleepRetainsDevicesDuringFreshClamshellAcquisition() {
+    func testWillSleepRetainsDevicesDuringPoweredClamshellAcquisition() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
+        var acknowledged = false
+
+        controller.ownershipChanged(isActive: true)
+        controller.prepareForSleep(
+            isOwnershipActive: true, isExternallyPowered: true
+        ) { acknowledged = true }
+
+        XCTAssertTrue(acknowledged)
+        XCTAssertTrue(bluetooth.released.isEmpty)
+    }
+
+    func testBatteryPowerReleasesEvenWhileAcquisitionIsInProgress() {
         let bluetooth = BluetoothMock()
         let peers = PeerMock()
         let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
@@ -116,8 +131,11 @@ final class HandoffControllerTests: XCTestCase {
             isOwnershipActive: true, isExternallyPowered: false
         ) { acknowledged = true }
 
+        XCTAssertEqual(controller.state, .releasing)
+        XCTAssertEqual(bluetooth.released, [["AA"]])
+        XCTAssertFalse(acknowledged)
+        bluetooth.releaseCompletion?(true)
         XCTAssertTrue(acknowledged)
-        XCTAssertTrue(bluetooth.released.isEmpty)
     }
 
     func testWillSleepRetainsDevicesImmediatelyAfterClamshellAcquisition() {

@@ -25,6 +25,9 @@ the process before the pairing was removed.
   ordinary sleep from a dock cable move. Retain the pairing while external power remains;
   release before sleep when power is on battery or cannot be determined. This avoids
   forcing a sleeping Magic peripheral to advertise for a new pairing after an ordinary wake.
+- Battery power is authoritative even during acquisition or its post-failure recovery.
+  A cable move must cancel that work and release immediately; otherwise a stale saved
+  device can keep the source claiming ownership after the dock has moved.
 - Keep hardware-detach release as the earliest path.
 - Retry acquisition on the destination after 2 and 5 seconds. If the burst fails while
   the physical ownership trigger remains active, start a fresh coordinated handoff after
