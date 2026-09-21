@@ -6,6 +6,16 @@ struct SavedDeviceInfo: Codable {
     let name: String
     let majorClass: UInt32
     let minorClass: UInt32
+    let lastSeenAt: Date?
+
+    init(address: String, name: String, majorClass: UInt32, minorClass: UInt32,
+         lastSeenAt: Date? = nil) {
+        self.address = address
+        self.name = name
+        self.majorClass = majorClass
+        self.minorClass = minorClass
+        self.lastSeenAt = lastSeenAt
+    }
 
     func toBluetoothDevice(isConnected: Bool = false) -> BluetoothDevice {
         BluetoothDevice(address: address, name: name, isConnected: isConnected,
@@ -44,6 +54,8 @@ final class AppState {
             addresses: savedAddresses, liveDevices: pairedDevices, savedInfo: savedDeviceInfo
         )
     }
+
+    func lastSeenAt(for address: String) -> Date? { savedDeviceInfo[address]?.lastSeenAt }
 
     var statusText: String {
         switch handoffState {
@@ -105,6 +117,7 @@ final class AppState {
 
     func refreshDevices() {
         pairedDevices = bluetooth.pairedDevices()
+        rememberVisibleSavedDevices()
     }
 
     func toggleDevice(_ address: String) {
@@ -116,7 +129,8 @@ final class AppState {
             if let device = pairedDevices.first(where: { $0.address == address }) {
                 savedDeviceInfo[address] = SavedDeviceInfo(
                     address: address, name: device.name,
-                    majorClass: device.majorClass, minorClass: device.minorClass
+                    majorClass: device.majorClass, minorClass: device.minorClass,
+                    lastSeenAt: Date()
                 )
             }
         }
@@ -265,7 +279,25 @@ final class AppState {
             && savedDeviceInfo[device.address] == nil {
             savedDeviceInfo[device.address] = SavedDeviceInfo(
                 address: device.address, name: device.name,
-                majorClass: device.majorClass, minorClass: device.minorClass
+                majorClass: device.majorClass, minorClass: device.minorClass,
+                lastSeenAt: Date()
+            )
+            changed = true
+        }
+        if changed { persistSaved() }
+    }
+
+    private func rememberVisibleSavedDevices(now: Date = Date()) {
+        var changed = false
+        for device in pairedDevices where savedAddresses.contains(device.address) {
+            let previous = savedDeviceInfo[device.address]
+            guard previous?.lastSeenAt.map({ now.timeIntervalSince($0) >= 60 }) ?? true else {
+                continue
+            }
+            savedDeviceInfo[device.address] = SavedDeviceInfo(
+                address: device.address, name: device.name,
+                majorClass: device.majorClass, minorClass: device.minorClass,
+                lastSeenAt: now
             )
             changed = true
         }

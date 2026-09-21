@@ -3,6 +3,25 @@ import XCTest
 @testable import AutoPair
 
 final class DeviceSelectionTests: XCTestCase {
+    func testLastSeenHintUsesHumanRelativeTime() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+
+        XCTAssertEqual(
+            LastSeenFormatter.string(
+                lastSeenAt: now.addingTimeInterval(-3 * 86_400), isConnected: false, now: now
+            ),
+            "3 days ago"
+        )
+        XCTAssertEqual(
+            LastSeenFormatter.string(lastSeenAt: nil, isConnected: false, now: now),
+            "Unknown"
+        )
+        XCTAssertEqual(
+            LastSeenFormatter.string(lastSeenAt: nil, isConnected: true, now: now),
+            "Now"
+        )
+    }
+
     func testSavedAddressWithoutMetadataRemainsVisibleForRemoval() {
         let address = "AA-BB-CC-DD-EE-FF"
 

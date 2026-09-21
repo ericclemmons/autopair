@@ -57,7 +57,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(empty)
         } else {
             for device in saved {
-                menu.addItem(makeDeviceMenuItem(device))
+                menu.addItem(makeDeviceMenuItem(
+                    device,
+                    detail: LastSeenFormatter.string(
+                        lastSeenAt: appState.lastSeenAt(for: device.address),
+                        isConnected: device.isConnected
+                    )
+                ))
             }
         }
 
@@ -317,13 +323,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         present(alert)
     }
 
-    private func makeDeviceMenuItem(_ device: BluetoothDevice) -> NSMenuItem {
+    private func makeDeviceMenuItem(_ device: BluetoothDevice, detail: String? = nil) -> NSMenuItem {
         let name = device.name.isEmpty ? device.address : device.name
         let icon = makeDeviceIcon(symbolName: device.deviceIcon, isConnected: device.isConnected)
         let item = NSMenuItem(title: name, action: #selector(toggleDevice(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = device.address
-        item.view = DeviceMenuItemView(address: device.address, name: name, icon: icon)
+        item.view = DeviceMenuItemView(
+            address: device.address, name: name, detail: detail, icon: icon
+        )
         return item
     }
 
@@ -367,13 +375,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 private final class DeviceMenuItemView: NSView {
     let address: String
     private let deviceName: String
+    private let detail: String?
     private let iconImage: NSImage
 
-    init(address: String, name: String, icon: NSImage) {
+    init(address: String, name: String, detail: String?, icon: NSImage) {
         self.address = address
         self.deviceName = name
+        self.detail = detail
         self.iconImage = icon
-        super.init(frame: NSRect(x: 0, y: 0, width: 200, height: 36))
+        super.init(frame: NSRect(x: 0, y: 0, width: detail == nil ? 200 : 280, height: 36))
         autoresizingMask = .width
     }
 
@@ -391,14 +401,32 @@ private final class DeviceMenuItemView: NSView {
         let iconY = (bounds.height - iconSize) / 2
         iconImage.draw(in: NSRect(x: iconX, y: iconY, width: iconSize, height: iconSize))
 
+        let nameStyle = NSMutableParagraphStyle()
+        nameStyle.lineBreakMode = .byTruncatingTail
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.menuFont(ofSize: 0),
             .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: nameStyle,
         ]
         let str = NSAttributedString(string: deviceName, attributes: attrs)
         let textX = iconX + iconSize + 8
         let textY = (bounds.height - str.size().height) / 2
-        str.draw(at: NSPoint(x: textX, y: textY))
+        var textWidth = bounds.width - textX - 16
+
+        if let detail {
+            let detailAttrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.menuFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+            let detailString = NSAttributedString(string: detail, attributes: detailAttrs)
+            let detailSize = detailString.size()
+            let detailX = bounds.width - 16 - detailSize.width
+            let detailY = (bounds.height - detailSize.height) / 2
+            detailString.draw(at: NSPoint(x: detailX, y: detailY))
+            textWidth = max(20, detailX - textX - 10)
+        }
+
+        str.draw(in: NSRect(x: textX, y: textY, width: textWidth, height: str.size().height))
     }
 
     override func mouseUp(with event: NSEvent) {
