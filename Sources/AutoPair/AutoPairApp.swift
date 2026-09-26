@@ -127,7 +127,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(makeComputersMenuItem())
 
-        if appState.handoffState == .failed {
+        if !appState.savedAddresses.isEmpty {
             let retry = NSMenuItem(title: "Retry Handoff", action: #selector(retryHandoff), keyEquivalent: "")
             retry.target = self
             menu.addItem(retry)

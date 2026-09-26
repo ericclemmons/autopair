@@ -230,6 +230,7 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         let semaphore = DispatchSemaphore(value: 0)
         var startResult = kIOReturnError
         var retainedPairer: IOBluetoothDevicePair?
+        var retainedDelegate: AutoPairBluetoothPairDelegate?
 
         DispatchQueue.main.async {
             guard self.isCurrent(generation) else {
@@ -240,7 +241,10 @@ final class BluetoothManager: NSObject, BluetoothControlling {
                 semaphore.signal()
                 return
             }
+            let delegate = AutoPairBluetoothPairDelegate()
+            pairer.delegate = delegate
             retainedPairer = pairer
+            retainedDelegate = delegate
             startResult = pairer.start()
             semaphore.signal()
         }
@@ -254,9 +258,14 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         Diagnostics.record("Bluetooth pair: started; observing system state")
         let deadline = Date().addingTimeInterval(10)
         while isCurrent(generation), Date() < deadline {
+            if let result = retainedDelegate?.finishedResult {
+                Diagnostics.record("Bluetooth pair: delegate finished result=\(result)")
+                if result != kIOReturnSuccess { return false }
+            }
             if device.isPaired() || device.isConnected() {
                 Diagnostics.record("Bluetooth pair: macOS reports paired/connected")
                 withExtendedLifetime(retainedPairer) {}
+                withExtendedLifetime(retainedDelegate) {}
                 return true
             }
             Thread.sleep(forTimeInterval: 0.25)
@@ -268,6 +277,7 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             Diagnostics.record("Bluetooth pair: observed-state timeout")
         }
         withExtendedLifetime(retainedPairer) {}
+        withExtendedLifetime(retainedDelegate) {}
         return device.isPaired() || device.isConnected()
     }
 
@@ -290,5 +300,35 @@ final class BluetoothManager: NSObject, BluetoothControlling {
     deinit {
         connectNotification?.unregister()
         disconnectNotifications.values.forEach { $0.unregister() }
+    }
+}
+
+private final class AutoPairBluetoothPairDelegate: NSObject, IOBluetoothDevicePairDelegate {
+    private let lock = NSLock()
+    private var result: IOReturn?
+
+    var finishedResult: IOReturn? {
+        lock.lock()
+        defer { lock.unlock() }
+        return result
+    }
+
+    func devicePairingUserConfirmationRequest(
+        _ sender: Any!, numericValue: BluetoothNumericValue
+    ) {
+        Diagnostics.record("Bluetooth pair: confirming numeric request")
+        (sender as? IOBluetoothDevicePair)?.replyUserConfirmation(true)
+    }
+
+    func devicePairingPINCodeRequest(_ sender: Any!) {
+        Diagnostics.record("Bluetooth pair: answering PIN request")
+        var pin = BluetoothPINCode()
+        (sender as? IOBluetoothDevicePair)?.replyPINCode(0, pinCode: &pin)
+    }
+
+    func devicePairingFinished(_ sender: Any!, error: IOReturn) {
+        lock.lock()
+        result = error
+        lock.unlock()
     }
 }

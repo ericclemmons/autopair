@@ -76,7 +76,8 @@ final class AppState {
     @ObservationIgnored private lazy var handoff = HandoffController(
         bluetooth: bluetooth,
         peers: peers,
-        addresses: { [weak self] in Array(self?.savedAddresses ?? []) }
+        addresses: { [weak self] in Array(self?.savedAddresses ?? []) },
+        acquisitionSettleDelay: 2
     )
 
     private let savedKey = "AutoPairSavedDevices"

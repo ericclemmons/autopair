@@ -30,6 +30,7 @@ final class HandoffController {
     private let recoveryDelay: TimeInterval
     private let now: () -> Date
     private let sleepRetentionGrace: TimeInterval
+    private let acquisitionSettleDelay: TimeInterval
     private var desiredOwnership: Bool?
     private var ownershipEstablishedAt: Date?
 
@@ -38,7 +39,8 @@ final class HandoffController {
          retryDelays: [TimeInterval] = [2, 5],
          recoveryDelay: TimeInterval = 10,
          now: @escaping () -> Date = Date.init,
-         sleepRetentionGrace: TimeInterval = 10) {
+         sleepRetentionGrace: TimeInterval = 10,
+         acquisitionSettleDelay: TimeInterval = 0) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
@@ -46,6 +48,7 @@ final class HandoffController {
         self.recoveryDelay = recoveryDelay
         self.now = now
         self.sleepRetentionGrace = sleepRetentionGrace
+        self.acquisitionSettleDelay = acquisitionSettleDelay
     }
 
     func ownershipChanged(isActive: Bool) {
@@ -96,7 +99,22 @@ final class HandoffController {
             if !released {
                 log.warning("Handoff: a peer did not acknowledge release; attempting acquisition")
             }
-            self.acquire(targets, operation: currentOperation, attempt: 0)
+            guard released, self.acquisitionSettleDelay > 0 else {
+                self.acquire(targets, operation: currentOperation, attempt: 0)
+                return
+            }
+
+            Diagnostics.record(
+                "peer released; waiting \(self.acquisitionSettleDelay)s for Bluetooth to settle"
+            )
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.operationID == currentOperation else { return }
+                self.acquire(targets, operation: currentOperation, attempt: 0)
+            }
+            self.retryWorkItem = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + self.acquisitionSettleDelay, execute: work
+            )
         }
     }
 

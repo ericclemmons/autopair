@@ -7,7 +7,7 @@ final class HandoffControllerTests: XCTestCase {
         let peers = PeerMock()
         let controller = HandoffController(
             bluetooth: bluetooth, peers: peers,
-            addresses: { ["AA:BB"] }
+            addresses: { ["AA:BB"] }, acquisitionSettleDelay: 0
         )
 
         controller.ownershipChanged(isActive: true)
@@ -22,6 +22,25 @@ final class HandoffControllerTests: XCTestCase {
 
         bluetooth.acquireCompletion?(true)
         XCTAssertEqual(controller.state, .owned)
+    }
+
+    func testActiveTriggerLetsBluetoothSettleAfterPeerReleaseBeforeAcquire() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(
+            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] },
+            acquisitionSettleDelay: 0.05
+        )
+
+        controller.ownershipChanged(isActive: true)
+        peers.releaseCompletion?(true)
+
+        XCTAssertEqual(controller.state, .waitingForRelease)
+        XCTAssertTrue(bluetooth.acquired.isEmpty)
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(controller.state, .acquiring)
+        XCTAssertEqual(bluetooth.acquired, [["AA"]])
     }
 
     func testInactiveTriggerProactivelyReleasesBeforeClosedLidMacSleeps() {
