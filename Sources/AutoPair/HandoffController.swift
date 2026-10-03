@@ -37,7 +37,7 @@ final class HandoffController {
     init(bluetooth: BluetoothControlling, peers: PeerCoordinating,
          addresses: @escaping () -> [String],
          retryDelays: [TimeInterval] = [2, 5],
-         recoveryDelay: TimeInterval = 10,
+         recoveryDelay: TimeInterval = 5,
          now: @escaping () -> Date = Date.init,
          sleepRetentionGrace: TimeInterval = 10,
          acquisitionSettleDelay: TimeInterval = 0) {
