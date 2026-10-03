@@ -65,6 +65,31 @@ final class HandoffController {
         beginOwnershipChange(isActive: isActive)
     }
 
+    /// Reconciles native Bluetooth connection notifications with the handoff state.
+    /// A reconnect can complete recovery without waiting for the next timer, while a
+    /// disconnect from a stable owner starts the existing bounded recovery loop.
+    func selectedDevicesConnectivityChanged(allConnected: Bool) {
+        guard desiredOwnership == true, !addresses().isEmpty else { return }
+
+        if allConnected {
+            guard state != .owned else { return }
+            retryWorkItem?.cancel()
+            bluetooth.cancelPendingOperations()
+            operationID = UUID()
+            ownershipEstablishedAt = now()
+            Diagnostics.record("selected devices connected; ownership recovered automatically")
+            state = .owned
+            return
+        }
+
+        guard state == .owned else { return }
+        operationID = UUID()
+        ownershipEstablishedAt = nil
+        state = .failed
+        Diagnostics.record("selected device disconnected while trigger is active; scheduling recovery")
+        scheduleAutomaticRecovery(for: operationID)
+    }
+
     private func beginOwnershipChange(isActive: Bool) {
         retryWorkItem?.cancel()
         bluetooth.cancelPendingOperations()

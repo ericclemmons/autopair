@@ -63,7 +63,7 @@ final class AppState {
         case .waitingForRelease: "Waiting for other Mac to release…"
         case .acquiring: "Connecting devices…"
         case .owned: "Devices connected"
-        case .failed: "Handoff failed — wake the device and retry"
+        case .failed: "Handoff interrupted — waiting for device"
         case .idle:
             signalName.isEmpty ? triggerKind.inactiveTitle : signalName
         }
@@ -219,7 +219,17 @@ final class AppState {
         sleepMonitor.start()
         bluetooth.onConnectionChanged = { [weak self] in
             self?.refreshWorkItem?.cancel()
-            let work = DispatchWorkItem { self?.refreshDevices() }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.refreshDevices()
+                let connectedAddresses = Set(
+                    self.pairedDevices.lazy.filter(\.isConnected).map(\.address)
+                )
+                self.handoff.selectedDevicesConnectivityChanged(
+                    allConnected: !self.savedAddresses.isEmpty
+                        && self.savedAddresses.isSubset(of: connectedAddresses)
+                )
+            }
             self?.refreshWorkItem = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
         }

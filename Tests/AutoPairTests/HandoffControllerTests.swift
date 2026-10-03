@@ -277,6 +277,46 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertEqual(peers.requested, [["AA"]])
         XCTAssertEqual(bluetooth.released, [["AA"]])
     }
+
+    func testSelectedDeviceDisconnectSchedulesRecoveryWhileOwnershipRemainsActive() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(
+            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] },
+            recoveryDelay: 0.05
+        )
+
+        controller.ownershipChanged(isActive: true)
+        peers.releaseCompletion?(true)
+        bluetooth.acquireCompletion?(true)
+        XCTAssertEqual(controller.state, .owned)
+
+        controller.selectedDevicesConnectivityChanged(allConnected: false)
+
+        XCTAssertEqual(controller.state, .failed)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(peers.requested, [["AA"], ["AA"]])
+    }
+
+    func testSelectedDevicesReconnectCompletesRecoveryAndCancelsPendingRetry() {
+        let bluetooth = BluetoothMock()
+        let peers = PeerMock()
+        let controller = HandoffController(
+            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] },
+            recoveryDelay: 0.05
+        )
+
+        controller.ownershipChanged(isActive: true)
+        peers.releaseCompletion?(true)
+        bluetooth.acquireCompletion?(true)
+        controller.selectedDevicesConnectivityChanged(allConnected: false)
+
+        controller.selectedDevicesConnectivityChanged(allConnected: true)
+
+        XCTAssertEqual(controller.state, .owned)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(peers.requested, [["AA"]])
+    }
 }
 
 private final class BluetoothMock: BluetoothControlling {

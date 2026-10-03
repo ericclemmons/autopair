@@ -32,6 +32,9 @@ the process before the pairing was removed.
 - Retry acquisition on the destination after 2 and 5 seconds. If the burst fails while
   the physical ownership trigger remains active, start a fresh coordinated handoff after
   a 10-second cooldown; cancel that recovery immediately when ownership changes.
+- Feed native Bluetooth connect/disconnect notifications back into the handoff state.
+  A selected-device disconnect from a stable owner starts recovery, while all selected
+  devices reconnecting completes recovery immediately and cancels the pending retry.
 - Persist a small rolling diagnostics timeline and expose it through **Copy Diagnostics**.
 - Debounce hardware removal for 750 ms so transient dock re-enumeration does not publish
   ownership loss; the raw IOKit state remains available to the sleep path immediately.
