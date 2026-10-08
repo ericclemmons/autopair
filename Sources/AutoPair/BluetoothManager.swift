@@ -65,6 +65,10 @@ struct BluetoothPairingVerifier {
     let stabilityInterval: TimeInterval
     private var stableSince: Date?
 
+    init(stabilityInterval: TimeInterval) {
+        self.stabilityInterval = stabilityInterval
+    }
+
     mutating func observe(pairingResult: IOReturn?, isPaired: Bool,
                           isConnected: Bool, at now: Date) -> BluetoothPairingVerification {
         if let pairingResult, pairingResult != kIOReturnSuccess {
