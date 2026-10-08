@@ -34,4 +34,21 @@ final class PeerCryptoTests: XCTestCase {
         XCTAssertEqual(PeerCrypto.decrypt(encrypted!, code: "123456", nonce: "nonce"), secret)
         XCTAssertNil(PeerCrypto.decrypt(encrypted!, code: "999999", nonce: "nonce"))
     }
+
+    func testReleaseIsUnconfirmedWhenTrustedPeerIsUnreachable() throws {
+        let suite = "AutoPairTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let trusted = TrustedComputer(id: "peer", name: "Other Mac", secret: Data([1, 2, 3]))
+        defaults.set(try JSONEncoder().encode([trusted]), forKey: "AutoPairTrustedComputers")
+        let manager = PeerManager(defaults: defaults)
+        let completed = expectation(description: "release result")
+
+        manager.requestRelease(of: ["AA"]) { confirmed in
+            XCTAssertFalse(confirmed)
+            completed.fulfill()
+        }
+
+        wait(for: [completed], timeout: 1)
+    }
 }

@@ -52,6 +52,39 @@ protocol BluetoothControlling: AnyObject {
     func release(_ addresses: [String], completion: @escaping (Bool) -> Void)
 }
 
+enum BluetoothPairingVerification: Equatable {
+    case observing
+    case succeeded
+    case failed
+}
+
+/// Pairing briefly reports connected while authentication is still in flight.
+/// Require the delegate to finish successfully and the resulting bond to remain
+/// connected before handing ownership to the controller.
+struct BluetoothPairingVerifier {
+    let stabilityInterval: TimeInterval
+    private var stableSince: Date?
+
+    mutating func observe(pairingResult: IOReturn?, isPaired: Bool,
+                          isConnected: Bool, at now: Date) -> BluetoothPairingVerification {
+        if let pairingResult, pairingResult != kIOReturnSuccess {
+            stableSince = nil
+            return .failed
+        }
+
+        guard pairingResult == kIOReturnSuccess, isPaired, isConnected else {
+            stableSince = nil
+            return .observing
+        }
+
+        guard let stableSince else {
+            self.stableSince = now
+            return .observing
+        }
+        return now.timeIntervalSince(stableSince) >= stabilityInterval ? .succeeded : .observing
+    }
+}
+
 /// Native Apple HID handoff, serialized away from the UI. This deliberately
 /// avoids both a global Bluetooth power cycle and an external blueutil process.
 final class BluetoothManager: NSObject, BluetoothControlling {
@@ -255,18 +288,32 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             return false
         }
 
-        Diagnostics.record("Bluetooth pair: started; observing system state")
-        let deadline = Date().addingTimeInterval(10)
+        Diagnostics.record("Bluetooth pair: started; awaiting completed, stable connection")
+        let deadline = Date().addingTimeInterval(12)
+        var verifier = BluetoothPairingVerifier(stabilityInterval: 1)
+        var loggedResult: IOReturn?
         while isCurrent(generation), Date() < deadline {
-            if let result = retainedDelegate?.finishedResult {
+            let result = retainedDelegate?.finishedResult
+            if let result, result != loggedResult {
                 Diagnostics.record("Bluetooth pair: delegate finished result=\(result)")
-                if result != kIOReturnSuccess { return false }
+                loggedResult = result
             }
-            if device.isPaired() || device.isConnected() {
-                Diagnostics.record("Bluetooth pair: macOS reports paired/connected")
+
+            switch verifier.observe(
+                pairingResult: result,
+                isPaired: device.isPaired(),
+                isConnected: device.isConnected(),
+                at: Date()
+            ) {
+            case .succeeded:
+                Diagnostics.record("Bluetooth pair: completed and connection remained stable")
                 withExtendedLifetime(retainedPairer) {}
                 withExtendedLifetime(retainedDelegate) {}
                 return true
+            case .failed:
+                return false
+            case .observing:
+                break
             }
             Thread.sleep(forTimeInterval: 0.25)
         }
@@ -278,7 +325,7 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         }
         withExtendedLifetime(retainedPairer) {}
         withExtendedLifetime(retainedDelegate) {}
-        return device.isPaired() || device.isConnected()
+        return false
     }
 
     @objc private func deviceConnected(_ notification: IOBluetoothUserNotification,

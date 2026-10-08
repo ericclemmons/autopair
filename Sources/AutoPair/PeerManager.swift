@@ -262,7 +262,8 @@ final class PeerManager: PeerCoordinating {
                 self.endpoints[computer.id].map { (computer, $0.endpoint) }
             }
             guard !targets.isEmpty else {
-                DispatchQueue.main.async { completion(true) }
+                Diagnostics.record("peer release unconfirmed: no trusted peer is reachable")
+                DispatchQueue.main.async { completion(false) }
                 return
             }
             let group = DispatchGroup()

@@ -39,7 +39,7 @@ Selected trigger becomes active on Mac B
         ↓
 Mac B sends an authenticated release request to its trusted peer
         ↓
-Mac A removes its pairing and confirms the devices are disconnected
+Mac A removes its pairing when reachable; Mac B waits briefly either way
         ↓
 Mac B pairs and connects through Apple's native IOBluetooth framework
 ```
@@ -51,15 +51,17 @@ limit). A destination that is still acquiring, or acquired within the last 10 se
 keeps its devices through transient clamshell/login sleep notifications. A stable owner
 also keeps its pairing through ordinary sleep while the dock still supplies power. If
 dock power disappears, it releases before sleep even when macOS has not yet removed the
-external display from its online-display list. The winning Mac requests peer release if the old
-Mac becomes unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
+external display from its online-display list. The winning Mac requests peer release as a
+best-effort hint, then continues after a bounded settling interval even if the old Mac is
+unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 Transient dock re-enumeration is debounced, duplicate ownership events are ignored, and
 a Mac with an active physical trigger will not honor a peer's release request. AutoPair
 also re-evaluates current ownership after wake instead of preserving a stale menu state.
-Pairing completion is based on macOS's observed device state rather than a delegate
-callback, and an open menu updates its handoff status live. If the initial pairing burst
-fails while the ownership trigger remains active, AutoPair starts a new coordinated
-handoff after a 10-second cooldown and keeps recovering until ownership changes.
+Pairing completion requires both a successful native delegate callback and a paired,
+connected state that remains stable for a short interval. An open menu updates its handoff
+status live. If the initial pairing burst fails while the ownership trigger remains active,
+AutoPair starts a new coordinated handoff after a cooldown and keeps recovering until
+ownership changes.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),
 not polling. AutoPair records serial number when available, otherwise vendor/product

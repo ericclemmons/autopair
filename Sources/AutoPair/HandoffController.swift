@@ -124,13 +124,13 @@ final class HandoffController {
             if !released {
                 log.warning("Handoff: a peer did not acknowledge release; attempting acquisition")
             }
-            guard released, self.acquisitionSettleDelay > 0 else {
+            guard self.acquisitionSettleDelay > 0 else {
                 self.acquire(targets, operation: currentOperation, attempt: 0)
                 return
             }
 
             Diagnostics.record(
-                "peer released; waiting \(self.acquisitionSettleDelay)s for Bluetooth to settle"
+                "release request finished; waiting \(self.acquisitionSettleDelay)s for Bluetooth to settle"
             )
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.operationID == currentOperation else { return }
