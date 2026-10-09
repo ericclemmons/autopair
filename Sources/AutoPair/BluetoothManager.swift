@@ -59,9 +59,18 @@ enum BluetoothPairingVerification: Equatable {
 }
 
 /// Pairing briefly reports connected while authentication is still in flight.
-/// Require the delegate to finish successfully and the resulting bond to remain
-/// connected before handing ownership to the controller.
+/// Treat only a successful delegate result plus a recorded bond as completed;
+/// connection stability is a separate phase.
 struct BluetoothPairingVerifier {
+    func observe(pairingResult: IOReturn?, isPaired: Bool) -> BluetoothPairingVerification {
+        if let pairingResult, pairingResult != kIOReturnSuccess {
+            return .failed
+        }
+        return pairingResult == kIOReturnSuccess && isPaired ? .succeeded : .observing
+    }
+}
+
+struct BluetoothConnectionVerifier {
     let stabilityInterval: TimeInterval
     private var stableSince: Date?
 
@@ -69,23 +78,38 @@ struct BluetoothPairingVerifier {
         self.stabilityInterval = stabilityInterval
     }
 
-    mutating func observe(pairingResult: IOReturn?, isPaired: Bool,
-                          isConnected: Bool, at now: Date) -> BluetoothPairingVerification {
-        if let pairingResult, pairingResult != kIOReturnSuccess {
+    mutating func observe(isConnected: Bool, at now: Date) -> Bool {
+        guard isConnected else {
             stableSince = nil
-            return .failed
+            return false
         }
-
-        guard pairingResult == kIOReturnSuccess, isPaired, isConnected else {
-            stableSince = nil
-            return .observing
-        }
-
         guard let stableSince else {
             self.stableSince = now
-            return .observing
+            return false
         }
-        return now.timeIntervalSince(stableSince) >= stabilityInterval ? .succeeded : .observing
+        return now.timeIntervalSince(stableSince) >= stabilityInterval
+    }
+}
+
+enum BluetoothConnectionResult: Equatable {
+    case connected
+    case unavailable
+    case rejected
+
+    static func failure(for result: IOReturn) -> BluetoothConnectionResult {
+        result == kIOReturnTimeout || result == kIOReturnSuccess ? .unavailable : .rejected
+    }
+
+    var shouldReplacePairing: Bool { self == .rejected }
+}
+
+private extension BluetoothConnectionResult {
+    var diagnosticDescription: String {
+        switch self {
+        case .connected: "connected"
+        case .unavailable: "unavailable"
+        case .rejected: "rejected"
+        }
     }
 }
 
@@ -185,15 +209,25 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         }
         let label = "\(initial.name ?? "Unknown device") [\(address)]"
         Diagnostics.record("Bluetooth acquire \(label): paired=\(initial.isPaired()), connected=\(initial.isConnected())")
-        if initial.isConnected() { return true }
-
-        // Try a retained bond first. If it is stale after another Mac's handoff,
-        // remove it before beginning native pairing.
-        if initial.isPaired(), connectAndVerify(initial, generation: generation) {
-            Diagnostics.record("Bluetooth acquire \(label): retained pairing connected")
+        if initial.isConnected(), waitForStableConnection(initial, generation: generation) {
             return true
         }
+
+        // Try a retained bond first. If it is stale after another Mac's handoff,
+        // replace it only after a definitive rejection. A timeout means the device
+        // is unavailable (including while connected by USB), not that its bond is stale.
         if initial.isPaired() {
+            let connection = connectAndVerify(initial, generation: generation)
+            if connection == .connected {
+                Diagnostics.record("Bluetooth acquire \(label): retained pairing connected")
+                return true
+            }
+            guard connection.shouldReplacePairing else {
+                Diagnostics.record(
+                    "Bluetooth acquire \(label): retained pairing \(connection.diagnosticDescription); preserving bond"
+                )
+                return false
+            }
             guard remove(initial) else { return false }
             Thread.sleep(forTimeInterval: 0.5)
         }
@@ -205,9 +239,13 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             Diagnostics.record("Bluetooth acquire \(label): native pairing failed")
             return false
         }
-        let success = device.isConnected() || connectAndVerify(device, generation: generation)
+        let connection = connectAndVerify(device, generation: generation)
+        let success = connection == .connected
         if !success { log.error("Bluetooth: connection failed after pairing for \(address)") }
-        Diagnostics.record("Bluetooth acquire \(label): post-pair connection \(success ? "succeeded" : "failed")")
+        let bondStatus = success ? "" : "; preserving bond"
+        Diagnostics.record(
+            "Bluetooth acquire \(label): post-pair connection \(connection.diagnosticDescription)\(bondStatus)"
+        )
         return success
     }
 
@@ -241,26 +279,39 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         return true
     }
 
-    private func connectAndVerify(_ device: IOBluetoothDevice, generation: Int) -> Bool {
+    private func connectAndVerify(_ device: IOBluetoothDevice,
+                                  generation: Int) -> BluetoothConnectionResult {
+        if device.isConnected(), waitForStableConnection(device, generation: generation) {
+            return .connected
+        }
+
+        var lastResult = kIOReturnError
         for attempt in 1...2 {
-            guard isCurrent(generation) else { return false }
-            let result = device.openConnection(
+            guard isCurrent(generation) else { return .unavailable }
+            lastResult = device.openConnection(
                 nil,
                 withPageTimeout: BluetoothHCIPageTimeout(0x0800),
                 authenticationRequired: false
             )
-            Diagnostics.record("Bluetooth connect: attempt=\(attempt), result=\(result)")
-            if result == kIOReturnSuccess {
-                let deadline = Date().addingTimeInterval(2)
-                while Date() < deadline {
-                    guard isCurrent(generation) else { return false }
-                    if device.isConnected() { return true }
-                    Thread.sleep(forTimeInterval: 0.1)
-                }
+            Diagnostics.record("Bluetooth connect: attempt=\(attempt), result=\(lastResult)")
+            if lastResult == kIOReturnSuccess,
+               waitForStableConnection(device, generation: generation) {
+                return .connected
             }
             if attempt < 2 { Thread.sleep(forTimeInterval: 1) }
         }
-        return device.isConnected()
+        return .failure(for: lastResult)
+    }
+
+    private func waitForStableConnection(_ device: IOBluetoothDevice, generation: Int) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        var verifier = BluetoothConnectionVerifier(stabilityInterval: 1)
+        while Date() < deadline {
+            guard isCurrent(generation) else { return false }
+            if verifier.observe(isConnected: device.isConnected(), at: Date()) { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
     }
 
     private func pairSync(_ device: IOBluetoothDevice, generation: Int) -> Bool {
@@ -292,9 +343,9 @@ final class BluetoothManager: NSObject, BluetoothControlling {
             return false
         }
 
-        Diagnostics.record("Bluetooth pair: started; awaiting completed, stable connection")
+        Diagnostics.record("Bluetooth pair: started; awaiting completed bond")
         let deadline = Date().addingTimeInterval(12)
-        var verifier = BluetoothPairingVerifier(stabilityInterval: 1)
+        let verifier = BluetoothPairingVerifier()
         var loggedResult: IOReturn?
         while isCurrent(generation), Date() < deadline {
             let result = retainedDelegate?.finishedResult
@@ -305,12 +356,10 @@ final class BluetoothManager: NSObject, BluetoothControlling {
 
             switch verifier.observe(
                 pairingResult: result,
-                isPaired: device.isPaired(),
-                isConnected: device.isConnected(),
-                at: Date()
+                isPaired: device.isPaired()
             ) {
             case .succeeded:
-                Diagnostics.record("Bluetooth pair: completed and connection remained stable")
+                Diagnostics.record("Bluetooth pair: completed; bond established")
                 withExtendedLifetime(retainedPairer) {}
                 withExtendedLifetime(retainedDelegate) {}
                 return true

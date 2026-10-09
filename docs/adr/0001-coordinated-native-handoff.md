@@ -22,8 +22,10 @@ frequently invalidated or retained bond state across that race.
   diagnostic information, not a gate: an unavailable peer cannot prevent handoff.
 - Bluetooth mutation uses IOBluetooth directly on one serial queue.
 - Acquisition tries a valid existing bond, removes a stale bond, then uses a retained
-  `IOBluetoothDevicePair` delegate. Pairing succeeds only after the delegate reports
-  success and the paired connection remains stable for a short interval.
+  `IOBluetoothDevicePair` delegate. Pairing succeeds after the delegate reports success
+  and macOS records the bond; wireless connection stability is verified separately.
+- A connection timeout preserves an existing bond because it indicates an unavailable
+  device (including a Magic peripheral attached by USB), not rejected authentication.
 - Physical ownership signals conform to `OwnershipTrigger` and do not own Bluetooth
   or network behavior.
 

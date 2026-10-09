@@ -57,11 +57,12 @@ unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 Transient dock re-enumeration is debounced, duplicate ownership events are ignored, and
 a Mac with an active physical trigger will not honor a peer's release request. AutoPair
 also re-evaluates current ownership after wake instead of preserving a stale menu state.
-Pairing completion requires both a successful native delegate callback and a paired,
-connected state that remains stable for a short interval. An open menu updates its handoff
-status live. If the initial pairing burst fails while the ownership trigger remains active,
-AutoPair starts a new coordinated handoff after a cooldown and keeps recovering until
-ownership changes.
+Pairing completion requires both a successful native delegate callback and a recorded
+Bluetooth bond. Wireless connection stability is verified separately, and a connection
+timeout preserves that bond so a Magic peripheral attached by USB is not repeatedly
+unpaired. An open menu updates its handoff status live. If the initial pairing burst fails
+while the ownership trigger remains active, AutoPair starts a new coordinated handoff
+after a cooldown and keeps recovering until ownership changes.
 
 Hardware detection is event-driven (IOKit first-match and termination notifications),
 not polling. AutoPair records serial number when available, otherwise vendor/product
