@@ -80,6 +80,12 @@ final class DisplayMonitor: OwnershipTrigger {
         }?.localizedName
     }
 
+    /// The built-in panel leaves the online list in clamshell mode, so its presence
+    /// means the lid is open and this Mac will stay awake after losing a trigger.
+    static var isBuiltInDisplayOnline: Bool {
+        onlineDisplayIDs().contains { CGDisplayIsBuiltin($0) != 0 }
+    }
+
     private static func onlineDisplayIDs() -> [CGDirectDisplayID] {
         var count: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &count) == .success, count > 0 else { return [] }

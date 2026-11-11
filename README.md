@@ -44,7 +44,9 @@ Mac A removes its pairing when reachable; Mac B waits briefly either way
 Mac B pairs and connects through Apple's native IOBluetooth framework
 ```
 
-The losing Mac releases when its trigger disappears. For a closed-lid Mac, AutoPair
+A closed-lid Mac releases when its trigger disappears. A Mac whose lid is open keeps
+its devices until its trusted peer asks for them or it sleeps, so an unclaimed
+peripheral is never left unpaired. For a closed-lid Mac, AutoPair
 also participates in macOS power notifications: it briefly delays the final sleep
 acknowledgement until the selected devices are released (with a 12-second safety
 limit). A destination that is still acquiring, or acquired within the last 10 seconds,

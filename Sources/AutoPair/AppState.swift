@@ -77,7 +77,8 @@ final class AppState {
         bluetooth: bluetooth,
         peers: peers,
         addresses: { [weak self] in Array(self?.savedAddresses ?? []) },
-        acquisitionSettleDelay: 2
+        acquisitionSettleDelay: 2,
+        isLidOpen: { DisplayMonitor.isBuiltInDisplayOnline }
     )
 
     private let savedKey = "AutoPairSavedDevices"

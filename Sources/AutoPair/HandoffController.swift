@@ -31,6 +31,7 @@ final class HandoffController {
     private let now: () -> Date
     private let sleepRetentionGrace: TimeInterval
     private let acquisitionSettleDelay: TimeInterval
+    private let isLidOpen: () -> Bool
     private var desiredOwnership: Bool?
     private var ownershipEstablishedAt: Date?
 
@@ -40,7 +41,8 @@ final class HandoffController {
          recoveryDelay: TimeInterval = 5,
          now: @escaping () -> Date = Date.init,
          sleepRetentionGrace: TimeInterval = 10,
-         acquisitionSettleDelay: TimeInterval = 0) {
+         acquisitionSettleDelay: TimeInterval = 0,
+         isLidOpen: @escaping () -> Bool = { false }) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
@@ -49,6 +51,7 @@ final class HandoffController {
         self.now = now
         self.sleepRetentionGrace = sleepRetentionGrace
         self.acquisitionSettleDelay = acquisitionSettleDelay
+        self.isLidOpen = isLidOpen
     }
 
     func ownershipChanged(isActive: Bool) {
@@ -101,11 +104,22 @@ final class HandoffController {
         }
 
         guard isActive else {
+            ownershipEstablishedAt = nil
+            // An open-lid Mac stays awake and reachable, so it can release when a
+            // peer asks or before it sleeps. Removing the bond now would leave an
+            // unclaimed Magic peripheral unpaired until it deep-sleeps and stops
+            // answering pages, which then requires a manual power cycle.
+            guard !isLidOpen() else {
+                Diagnostics.record(
+                    "trigger inactive with lid open; retaining \(targets.count) device(s) until a peer requests release or this Mac sleeps"
+                )
+                state = .idle
+                return
+            }
             // The dock may provide the losing Mac's network and power while its
             // lid is closed. Release immediately, before detach puts it to sleep;
             // the destination's peer request is only a secondary safety net.
             let currentOperation = operationID
-            ownershipEstablishedAt = nil
             state = .releasing
             Diagnostics.record("trigger inactive; releasing \(targets.count) device(s)")
             bluetooth.release(targets) { [weak self] success in

@@ -15,7 +15,8 @@ frequently invalidated or retained bond state across that race.
 
 - The Mac whose selected ownership trigger becomes active initiates handoff.
 - A Mac whose trigger becomes inactive proactively releases before dock removal can
-  put a closed-lid Mac to sleep or remove its network connection.
+  put a closed-lid Mac to sleep or remove its network connection. An open-lid Mac
+  defers release until a peer asks or it sleeps (ADR 0005).
 - AutoPair instances discover each other through Bonjour on the local network.
 - The destination sends a best-effort release request, then always waits for a
   bounded Bluetooth settling interval before acquiring locally. Acknowledgment is
