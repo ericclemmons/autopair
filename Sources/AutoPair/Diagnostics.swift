@@ -21,7 +21,7 @@ enum Diagnostics {
             )
             if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
                (attributes[.size] as? NSNumber)?.intValue ?? 0 > maximumBytes {
-                try? Data().write(to: url)
+                trim(url)
             }
             let line = "\(formatter.string(from: Date())) \(message)\n"
             guard let data = line.data(using: .utf8) else { return }
@@ -33,6 +33,19 @@ enum Diagnostics {
                 try? data.write(to: url, options: .atomic)
             }
         }
+    }
+
+    /// Keeps the newest half so a long retry loop cannot erase the events that started it.
+    private static func trim(_ url: URL) {
+        guard let data = try? Data(contentsOf: url) else {
+            try? Data().write(to: url)
+            return
+        }
+        var kept = data.suffix(maximumBytes / 2)
+        if let newline = kept.firstIndex(of: UInt8(ascii: "\n")) {
+            kept = kept[kept.index(after: newline)...]
+        }
+        try? Data(kept).write(to: url, options: .atomic)
     }
 
     static func contents(maxBytes: Int? = nil) -> String {

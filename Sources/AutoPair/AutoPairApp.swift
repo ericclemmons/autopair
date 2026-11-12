@@ -19,14 +19,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        #if DEBUG
-        let iconName = "link.circle"
-        #else
-        let iconName = "link.circle.fill"
-        #endif
-        statusItem.button?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "AutoPair")
-        statusItem.button?.toolTip = "AutoPair: \(appState.statusText)"
         appState.onStatusChange = { [weak self] in self?.updateStatusPresentation() }
+        updateStatusPresentation()
 
         let menu = NSMenu()
         menu.delegate = self
@@ -195,6 +189,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let title = "AutoPair: \(appState.statusText)"
         statusItem?.button?.toolTip = title
         statusHeader?.title = title
+
+        let needsAttention = appState.devicesUnreachable && appState.handoffState != .owned
+        #if DEBUG
+        let iconName = needsAttention ? "exclamationmark.circle" : "link.circle"
+        #else
+        let iconName = needsAttention ? "exclamationmark.circle.fill" : "link.circle.fill"
+        #endif
+        statusItem?.button?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "AutoPair")
     }
 
     @objc private func showPairingCode() {
