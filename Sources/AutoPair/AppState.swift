@@ -45,6 +45,7 @@ final class AppState {
     var discoveredComputers: [ComputerInfo] = []
     var trustedComputers: [TrustedComputer] = []
     var handoffState: HandoffController.State = .idle
+    var devicesUnreachable = false
     var onStatusChange: (() -> Void)?
     private(set) var triggerKind: OwnershipTriggerKind
     private(set) var selectedHardware: HardwareIdentity? = nil
@@ -58,7 +59,14 @@ final class AppState {
     func lastSeenAt(for address: String) -> Date? { savedDeviceInfo[address]?.lastSeenAt }
 
     var statusText: String {
-        switch handoffState {
+        if devicesUnreachable, handoffState != .owned {
+            let names = menuSavedDevices.map(\.name)
+            guard names.count == 1, let name = names.first else {
+                return "Can't reach your devices — turn them off and on"
+            }
+            return "Can't reach \(name) — turn it off and on"
+        }
+        return switch handoffState {
         case .releasing: "Releasing devices…"
         case .waitingForRelease: "Waiting for other Mac to release…"
         case .acquiring: "Connecting devices…"
@@ -237,6 +245,10 @@ final class AppState {
         handoff.onStateChange = { [weak self] state in
             self?.handoffState = state
             if state == .owned || state == .failed { self?.refreshDevices() }
+            self?.onStatusChange?()
+        }
+        handoff.onDevicesUnreachableChange = { [weak self] unreachable in
+            self?.devicesUnreachable = unreachable
             self?.onStatusChange?()
         }
         peers.onComputersChanged = { [weak self] discovered, trusted in

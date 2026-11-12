@@ -21,6 +21,17 @@ final class HandoffController {
         didSet { onStateChange?(state) }
     }
 
+    /// True once repeated handoff cycles cannot reach the devices. A released Magic
+    /// peripheral that idles without a host stops answering pages until it is
+    /// turned off and on, so retries alone cannot recover it.
+    var onDevicesUnreachableChange: ((Bool) -> Void)?
+    private(set) var devicesUnreachable = false {
+        didSet {
+            guard devicesUnreachable != oldValue else { return }
+            onDevicesUnreachableChange?(devicesUnreachable)
+        }
+    }
+
     private let bluetooth: BluetoothControlling
     private let peers: PeerCoordinating
     private let addresses: () -> [String]
@@ -28,6 +39,9 @@ final class HandoffController {
     private var retryWorkItem: DispatchWorkItem?
     private let retryDelays: [TimeInterval]
     private let recoveryDelay: TimeInterval
+    private let maximumRecoveryDelay: TimeInterval
+    private let unreachableAfterFailedCycles: Int
+    private var failedCycles = 0
     private let now: () -> Date
     private let sleepRetentionGrace: TimeInterval
     private let acquisitionSettleDelay: TimeInterval
@@ -39,6 +53,8 @@ final class HandoffController {
          addresses: @escaping () -> [String],
          retryDelays: [TimeInterval] = [2, 5],
          recoveryDelay: TimeInterval = 5,
+         maximumRecoveryDelay: TimeInterval = 60,
+         unreachableAfterFailedCycles: Int = 2,
          now: @escaping () -> Date = Date.init,
          sleepRetentionGrace: TimeInterval = 10,
          acquisitionSettleDelay: TimeInterval = 0,
@@ -48,6 +64,8 @@ final class HandoffController {
         self.addresses = addresses
         self.retryDelays = retryDelays
         self.recoveryDelay = recoveryDelay
+        self.maximumRecoveryDelay = maximumRecoveryDelay
+        self.unreachableAfterFailedCycles = unreachableAfterFailedCycles
         self.now = now
         self.sleepRetentionGrace = sleepRetentionGrace
         self.acquisitionSettleDelay = acquisitionSettleDelay
@@ -60,12 +78,21 @@ final class HandoffController {
             return
         }
         desiredOwnership = isActive
+        resetRecovery(clearUnreachable: !isActive)
         beginOwnershipChange(isActive: isActive)
     }
 
+    /// Wake and manual retries restart the backoff but keep the unreachable hint
+    /// until the devices actually connect.
     func retryOwnership(isActive: Bool) {
         desiredOwnership = isActive
+        resetRecovery(clearUnreachable: !isActive)
         beginOwnershipChange(isActive: isActive)
+    }
+
+    private func resetRecovery(clearUnreachable: Bool) {
+        failedCycles = 0
+        if clearUnreachable { devicesUnreachable = false }
     }
 
     /// Reconciles native Bluetooth connection notifications with the handoff state.
@@ -80,6 +107,7 @@ final class HandoffController {
             bluetooth.cancelPendingOperations()
             operationID = UUID()
             ownershipEstablishedAt = now()
+            resetRecovery(clearUnreachable: true)
             Diagnostics.record("selected devices connected; ownership recovered automatically")
             state = .owned
             return
@@ -166,6 +194,7 @@ final class HandoffController {
             if success {
                 Diagnostics.record("acquisition succeeded")
                 self.ownershipEstablishedAt = self.now()
+                self.resetRecovery(clearUnreachable: true)
                 self.state = .owned
             } else if attempt < self.retryDelays.count {
                 let delay = self.retryDelays[attempt]
@@ -178,6 +207,13 @@ final class HandoffController {
             } else {
                 Diagnostics.record("acquisition failed after \(attempt + 1) attempts")
                 self.ownershipEstablishedAt = nil
+                self.failedCycles += 1
+                if self.failedCycles >= self.unreachableAfterFailedCycles, !self.devicesUnreachable {
+                    Diagnostics.record(
+                        "devices unreachable after \(self.failedCycles) handoff cycles; asking user to power-cycle them"
+                    )
+                    self.devicesUnreachable = true
+                }
                 self.state = .failed
                 self.scheduleAutomaticRecovery(for: operation)
             }
@@ -186,7 +222,9 @@ final class HandoffController {
 
     private func scheduleAutomaticRecovery(for operation: UUID) {
         guard desiredOwnership == true else { return }
-        Diagnostics.record("automatic recovery scheduled in \(Int(recoveryDelay))s")
+        let backoff = pow(2, Double(max(failedCycles - 1, 0)))
+        let delay = min(recoveryDelay * backoff, maximumRecoveryDelay)
+        Diagnostics.record("automatic recovery scheduled in \(Int(delay))s")
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.operationID == operation,
                   self.desiredOwnership == true else { return }
@@ -194,7 +232,7 @@ final class HandoffController {
             self.beginOwnershipChange(isActive: true)
         }
         retryWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + recoveryDelay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func prepareForSleep(isOwnershipActive: Bool = false,
@@ -232,6 +270,7 @@ final class HandoffController {
         bluetooth.cancelPendingOperations()
         operationID = UUID()
         ownershipEstablishedAt = nil
+        resetRecovery(clearUnreachable: true)
         let targets = addresses()
         guard !targets.isEmpty else { completion(); return }
         state = .releasing
@@ -253,6 +292,7 @@ final class HandoffController {
         bluetooth.cancelPendingOperations()
         operationID = UUID() // cancel a local acquisition before releasing
         ownershipEstablishedAt = nil
+        resetRecovery(clearUnreachable: true)
         bluetooth.release(addresses, completion: completion)
         state = .idle
     }

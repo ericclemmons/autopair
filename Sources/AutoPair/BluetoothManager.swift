@@ -344,10 +344,20 @@ final class BluetoothManager: NSObject, BluetoothControlling {
         }
 
         Diagnostics.record("Bluetooth pair: started; awaiting completed bond")
-        let deadline = Date().addingTimeInterval(12)
+        var deadline = Date().addingTimeInterval(12)
+        var extendedDeadline = false
         let verifier = BluetoothPairingVerifier()
         var loggedResult: IOReturn?
         while isCurrent(generation), Date() < deadline {
+            // Paging a sleeping peripheral can consume most of the window, so give
+            // authentication its own time once the link is up instead of abandoning
+            // a pairing that is already in progress.
+            if !extendedDeadline,
+               retainedDelegate?.hasConnected == true || device.isConnected() {
+                extendedDeadline = true
+                deadline = max(deadline, Date().addingTimeInterval(10))
+                Diagnostics.record("Bluetooth pair: device connected; allowing 10s to finish")
+            }
             let result = retainedDelegate?.finishedResult
             if let result, result != loggedResult {
                 Diagnostics.record("Bluetooth pair: delegate finished result=\(result)")
@@ -406,11 +416,24 @@ final class BluetoothManager: NSObject, BluetoothControlling {
 private final class AutoPairBluetoothPairDelegate: NSObject, IOBluetoothDevicePairDelegate {
     private let lock = NSLock()
     private var result: IOReturn?
+    private var connected = false
 
     var finishedResult: IOReturn? {
         lock.lock()
         defer { lock.unlock() }
         return result
+    }
+
+    var hasConnected: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return connected
+    }
+
+    func devicePairingConnected(_ sender: Any!) {
+        lock.lock()
+        connected = true
+        lock.unlock()
     }
 
     func devicePairingUserConfirmationRequest(
