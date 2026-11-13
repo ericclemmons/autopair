@@ -44,16 +44,17 @@ Mac A removes its pairing when reachable; Mac B waits briefly either way
 Mac B pairs and connects through Apple's native IOBluetooth framework
 ```
 
-A closed-lid Mac releases when its trigger disappears. A Mac whose lid is open keeps
-its devices until its trusted peer asks for them or it sleeps, so an unclaimed
-peripheral is never left unpaired. For a closed-lid Mac, AutoPair
-also participates in macOS power notifications: it briefly delays the final sleep
-acknowledgement until the selected devices are released (with a 12-second safety
-limit). A destination that is still acquiring, or acquired within the last 10 seconds,
-keeps its devices through transient clamshell/login sleep notifications. A stable owner
-also keeps its pairing through ordinary sleep while the dock still supplies power. If
-dock power disappears, it releases before sleep even when macOS has not yet removed the
-external display from its online-display list. The winning Mac requests peer release as a
+An unpaired Magic peripheral that no Mac claims goes quiet until it is turned off and
+on, while one that keeps its pairing reconnects on a click. So a Mac never releases its
+devices unless a trusted peer wants them. When its trigger disappears, before it sleeps,
+and whenever a trusted peer reappears on the network, AutoPair asks reachable trusted
+peers whether their trigger is active. It releases only if one says yes; otherwise it
+keeps the pairing, and a later peer release request hands the devices over. Before
+sleep, AutoPair briefly delays the final sleep acknowledgement while it asks and
+releases (with a 12-second safety limit). A destination that is still acquiring, or
+acquired within the last 10 seconds, keeps its devices through transient
+clamshell/login sleep notifications, and a docked owner keeps them through ordinary
+sleep while the dock still supplies power. The winning Mac requests peer release as a
 best-effort hint, then continues after a bounded settling interval even if the old Mac is
 unreachable. AutoPair no longer embeds `blueutil` or power-cycles Bluetooth.
 Transient dock re-enumeration is debounced, duplicate ownership events are ignored, and
@@ -84,8 +85,10 @@ AutoPair instances can be discovered for setup but cannot release devices.
 ## Caveats
 
 - Both Macs must be awake, running AutoPair, and on the same local network during
-  initial computer pairing. Proactive release handles the closed-lid cable move later.
-- Apple Magic devices may need a click or key press to wake before pairing.
+  initial computer pairing.
+- If the Mac holding the devices is asleep or away when another Mac claims them, click
+  the device to wake it. If it still won't connect, turn it off and on. AutoPair shows
+  this hint in the menu bar.
 - Legacy saved addresses whose Bluetooth metadata is no longer available appear as
   **Unknown Saved Device** so they can be removed instead of silently participating
   in handoffs.

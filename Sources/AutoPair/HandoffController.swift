@@ -2,6 +2,7 @@ import Foundation
 
 protocol PeerCoordinating: AnyObject {
     func requestRelease(of addresses: [String], completion: @escaping (Bool) -> Void)
+    func peerWantsDevices(completion: @escaping (Bool) -> Void)
 }
 
 /// Coordinates the ordered release -> acquire transaction. Trigger monitors,
@@ -21,9 +22,8 @@ final class HandoffController {
         didSet { onStateChange?(state) }
     }
 
-    /// True once repeated handoff cycles cannot reach the devices. A released Magic
-    /// peripheral that idles without a host stops answering pages until it is
-    /// turned off and on, so retries alone cannot recover it.
+    /// True once a handoff cycle cannot reach the devices. An idle Magic peripheral
+    /// answers pages again after a click, or after a power cycle if it was released.
     var onDevicesUnreachableChange: ((Bool) -> Void)?
     private(set) var devicesUnreachable = false {
         didSet {
@@ -45,7 +45,6 @@ final class HandoffController {
     private let now: () -> Date
     private let sleepRetentionGrace: TimeInterval
     private let acquisitionSettleDelay: TimeInterval
-    private let isLidOpen: () -> Bool
     private var desiredOwnership: Bool?
     private var ownershipEstablishedAt: Date?
 
@@ -53,12 +52,11 @@ final class HandoffController {
          addresses: @escaping () -> [String],
          retryDelays: [TimeInterval] = [2, 5],
          recoveryDelay: TimeInterval = 5,
-         maximumRecoveryDelay: TimeInterval = 60,
-         unreachableAfterFailedCycles: Int = 2,
+         maximumRecoveryDelay: TimeInterval = 15,
+         unreachableAfterFailedCycles: Int = 1,
          now: @escaping () -> Date = Date.init,
          sleepRetentionGrace: TimeInterval = 10,
-         acquisitionSettleDelay: TimeInterval = 0,
-         isLidOpen: @escaping () -> Bool = { false }) {
+         acquisitionSettleDelay: TimeInterval = 0) {
         self.bluetooth = bluetooth
         self.peers = peers
         self.addresses = addresses
@@ -69,7 +67,6 @@ final class HandoffController {
         self.now = now
         self.sleepRetentionGrace = sleepRetentionGrace
         self.acquisitionSettleDelay = acquisitionSettleDelay
-        self.isLidOpen = isLidOpen
     }
 
     func ownershipChanged(isActive: Bool) {
@@ -133,27 +130,7 @@ final class HandoffController {
 
         guard isActive else {
             ownershipEstablishedAt = nil
-            // An open-lid Mac stays awake and reachable, so it can release when a
-            // peer asks or before it sleeps. Removing the bond now would leave an
-            // unclaimed Magic peripheral unpaired until it deep-sleeps and stops
-            // answering pages, which then requires a manual power cycle.
-            guard !isLidOpen() else {
-                Diagnostics.record(
-                    "trigger inactive with lid open; retaining \(targets.count) device(s) until a peer requests release or this Mac sleeps"
-                )
-                state = .idle
-                return
-            }
-            // The dock may provide the losing Mac's network and power while its
-            // lid is closed. Release immediately, before detach puts it to sleep;
-            // the destination's peer request is only a secondary safety net.
-            let currentOperation = operationID
-            state = .releasing
-            Diagnostics.record("trigger inactive; releasing \(targets.count) device(s)")
-            bluetooth.release(targets) { [weak self] success in
-                guard let self, self.operationID == currentOperation else { return }
-                self.state = success ? .idle : .failed
-            }
+            releaseIfPeerWants(targets, context: "trigger inactive", operation: operationID) {}
             return
         }
 
@@ -210,7 +187,7 @@ final class HandoffController {
                 self.failedCycles += 1
                 if self.failedCycles >= self.unreachableAfterFailedCycles, !self.devicesUnreachable {
                     Diagnostics.record(
-                        "devices unreachable after \(self.failedCycles) handoff cycles; asking user to power-cycle them"
+                        "devices unreachable after \(self.failedCycles) handoff cycle(s); asking user to click or power-cycle them"
                     )
                     self.devicesUnreachable = true
                 }
@@ -264,7 +241,7 @@ final class HandoffController {
         }
         if isOwnershipActive {
             let reason = isExternallyPowered == false ? "battery power" : "unconfirmed dock power"
-            Diagnostics.record("sleep announced with \(reason); releasing before sleep despite active trigger")
+            Diagnostics.record("sleep announced with \(reason); checking whether a trusted Mac wants the devices")
         }
         retryWorkItem?.cancel()
         bluetooth.cancelPendingOperations()
@@ -273,11 +250,42 @@ final class HandoffController {
         resetRecovery(clearUnreachable: true)
         let targets = addresses()
         guard !targets.isEmpty else { completion(); return }
-        state = .releasing
-        bluetooth.release(targets) { [weak self] success in
-            Diagnostics.record("pre-sleep release \(success ? "succeeded" : "failed")")
-            self?.state = success ? .idle : .failed
-            completion()
+        releaseIfPeerWants(targets, context: "pre-sleep", operation: operationID, completion: completion)
+    }
+
+    /// Hands retained devices to a peer that wants them, e.g. when a peer reappears on
+    /// the network while this Mac is in a background wake. Never interrupts work in flight.
+    func peersChanged() {
+        guard desiredOwnership == false, state == .idle else { return }
+        let targets = addresses()
+        guard !targets.isEmpty else { return }
+        releaseIfPeerWants(targets, context: "peer update", operation: operationID) {}
+    }
+
+    /// Releasing with no Mac ready to claim the devices strands Magic peripherals:
+    /// unpaired and idle, they stop answering pages until power-cycled. A retained
+    /// bond instead reconnects on a click. So release proactively only when a trusted
+    /// peer's trigger is active; otherwise keep the bond and let a peer's release
+    /// request, or a later wake, hand the devices over.
+    private func releaseIfPeerWants(_ targets: [String], context: String, operation: UUID,
+                                    completion: @escaping () -> Void) {
+        peers.peerWantsDevices { [weak self] wanted in
+            guard let self, self.operationID == operation else { completion(); return }
+            guard wanted else {
+                Diagnostics.record("\(context): no trusted Mac wants \(targets.count) device(s); keeping them paired")
+                self.state = .idle
+                completion()
+                return
+            }
+            Diagnostics.record("\(context): a trusted Mac wants \(targets.count) device(s); releasing")
+            self.state = .releasing
+            self.bluetooth.release(targets) { [weak self] success in
+                Diagnostics.record("\(context) release \(success ? "succeeded" : "failed")")
+                if let self, self.operationID == operation {
+                    self.state = success ? .idle : .failed
+                }
+                completion()
+            }
         }
     }
 

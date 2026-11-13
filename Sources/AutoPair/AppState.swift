@@ -62,9 +62,9 @@ final class AppState {
         if devicesUnreachable, handoffState != .owned {
             let names = menuSavedDevices.map(\.name)
             guard names.count == 1, let name = names.first else {
-                return "Can't reach your devices — turn them off and on"
+                return "Can't reach your devices — click them, or turn them off and on"
             }
-            return "Can't reach \(name) — turn it off and on"
+            return "Can't reach \(name) — click it, or turn it off and on"
         }
         return switch handoffState {
         case .releasing: "Releasing devices…"
@@ -85,8 +85,7 @@ final class AppState {
         bluetooth: bluetooth,
         peers: peers,
         addresses: { [weak self] in Array(self?.savedAddresses ?? []) },
-        acquisitionSettleDelay: 2,
-        isLidOpen: { DisplayMonitor.isBuiltInDisplayOnline }
+        acquisitionSettleDelay: 2
     )
 
     private let savedKey = "AutoPairSavedDevices"
@@ -254,7 +253,9 @@ final class AppState {
         peers.onComputersChanged = { [weak self] discovered, trusted in
             self?.discoveredComputers = discovered
             self?.trustedComputers = trusted
+            self?.handoff.peersChanged()
         }
+        peers.isOwnershipActive = { [weak self] in self?.trigger?.isActive == true }
         peers.onReleaseRequest = { [weak self] requested, completion in
             guard let self else { completion(false); return }
             let allowed = requested.filter { self.savedAddresses.contains($0) }

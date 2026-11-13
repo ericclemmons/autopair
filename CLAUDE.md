@@ -28,7 +28,7 @@ Menu bar app with no SwiftUI views — everything is `AppKit` + `NSMenu`. Entry 
 **Trigger → action:**
 - Selected trigger becomes active → ask Bonjour peers to release → pair/connect locally
 - Peer release request → unpair locally → acknowledge only after release completes
-- Trigger becomes inactive → release immediately before a closed-lid Mac can sleep
+- Trigger becomes inactive, Mac sleeps, or a peer reappears → ask peers; release only if a peer's trigger is active, otherwise keep the bond
 
 **Key files:**
 - `AppState.swift` — composition root; persists selected devices and trigger.

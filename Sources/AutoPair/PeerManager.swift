@@ -32,6 +32,7 @@ enum ComputerPairingError: LocalizedError {
 private struct PeerMessage: Codable {
     enum Action: String, Codable {
         case pair, paired, release, released, diagnostics, diagnosticsResult
+        case ownershipQuery, ownershipActive, ownershipInactive
     }
     let action: Action
     let senderID: String
@@ -113,6 +114,8 @@ enum PeerCrypto {
 final class PeerManager: PeerCoordinating {
     var onReleaseRequest: (([String], @escaping (Bool) -> Void) -> Void)?
     var onComputersChanged: (([ComputerInfo], [TrustedComputer]) -> Void)?
+    /// Read on the main queue when a trusted peer asks whether this Mac wants its devices.
+    var isOwnershipActive: () -> Bool = { false }
 
     private let serviceType = "_autopair._tcp"
     private let queue = DispatchQueue(label: "com.ericclemmons.AutoPair.network", qos: .utility)
@@ -294,6 +297,50 @@ final class PeerManager: PeerCoordinating {
         }
     }
 
+    /// Asks every reachable trusted Mac whether its ownership trigger is active. A peer
+    /// that is asleep, offline, or running an older AutoPair counts as not wanting them.
+    func peerWantsDevices(completion: @escaping (Bool) -> Void) {
+        queue.async {
+            let targets = self.trusted.values.compactMap { computer -> (TrustedComputer, NWEndpoint)? in
+                self.endpoints[computer.id].map { (computer, $0.endpoint) }
+            }
+            guard !targets.isEmpty else {
+                Diagnostics.record("ownership query: no trusted peer is reachable")
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var wanted = false
+            for (computer, endpoint) in targets {
+                group.enter()
+                let nonce = PeerCrypto.randomData(count: 16).base64EncodedString()
+                let timestamp = Int64(Date().timeIntervalSince1970)
+                let request = PeerMessage(
+                    action: .ownershipQuery, senderID: self.instanceID,
+                    senderName: self.computerName, addresses: [], nonce: nonce,
+                    timestamp: timestamp,
+                    authentication: PeerCrypto.signature(
+                        action: .ownershipQuery, senderID: self.instanceID, addresses: [],
+                        timestamp: timestamp, nonce: nonce, secret: computer.secret
+                    )
+                )
+                // Short timeout: this runs while sleep is being held open.
+                self.exchange(request, with: endpoint, timeout: 3) { response in
+                    let active = response.map {
+                        self.authenticate($0, expectedAction: .ownershipActive, computer: computer)
+                    } ?? false
+                    lock.lock(); wanted = wanted || active; lock.unlock()
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) {
+                Diagnostics.record("ownership query: a trusted peer wants the devices=\(wanted)")
+                completion(wanted)
+            }
+        }
+    }
+
     func requestDiagnostics(completion: @escaping ([String: String]) -> Void) {
         queue.async {
             let computers = Array(self.trusted.values)
@@ -350,6 +397,7 @@ final class PeerManager: PeerCoordinating {
                     case .pair: self.handlePair(message, on: connection)
                     case .release: self.handleRelease(message, on: connection)
                     case .diagnostics: self.handleDiagnostics(message, on: connection)
+                    case .ownershipQuery: self.handleOwnershipQuery(message, on: connection)
                     default: connection.cancel()
                     }
                 }
@@ -449,6 +497,30 @@ final class PeerManager: PeerCoordinating {
         send(response, on: connection) { _ in connection.cancel() }
     }
 
+    private func handleOwnershipQuery(_ message: PeerMessage, on connection: NWConnection) {
+        guard let computer = trusted[message.senderID],
+              authenticate(message, expectedAction: .ownershipQuery, computer: computer) else {
+            connection.cancel()
+            return
+        }
+        DispatchQueue.main.async {
+            let action: PeerMessage.Action = self.isOwnershipActive() ? .ownershipActive : .ownershipInactive
+            self.queue.async {
+                let nonce = PeerCrypto.randomData(count: 16).base64EncodedString()
+                let timestamp = Int64(Date().timeIntervalSince1970)
+                let response = PeerMessage(
+                    action: action, senderID: self.instanceID, senderName: self.computerName,
+                    addresses: [], nonce: nonce, timestamp: timestamp,
+                    authentication: PeerCrypto.signature(
+                        action: action, senderID: self.instanceID, addresses: [],
+                        timestamp: timestamp, nonce: nonce, secret: computer.secret
+                    )
+                )
+                self.send(response, on: connection) { _ in connection.cancel() }
+            }
+        }
+    }
+
     private func authenticate(_ message: PeerMessage, expectedAction: PeerMessage.Action,
                               computer: TrustedComputer) -> Bool {
         guard message.action == expectedAction, let addresses = message.addresses,
@@ -468,10 +540,11 @@ final class PeerManager: PeerCoordinating {
     }
 
     private func exchange(_ message: PeerMessage, with endpoint: NWEndpoint,
+                          timeout: TimeInterval = 8,
                           completion: @escaping (PeerMessage?) -> Void) {
         let connection = NWConnection(to: endpoint, using: .tcp)
         let finish = PeerOnce { response in connection.cancel(); completion(response) }
-        queue.asyncAfter(deadline: .now() + 8) { finish.call(nil) }
+        queue.asyncAfter(deadline: .now() + timeout) { finish.call(nil) }
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
