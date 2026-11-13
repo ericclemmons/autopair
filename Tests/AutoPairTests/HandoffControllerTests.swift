@@ -62,7 +62,7 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertEqual(bluetooth.acquired, [["AA"]])
     }
 
-    func testInactiveTriggerProactivelyReleasesBeforeClosedLidMacSleeps() {
+    func testInactiveTriggerReleasesWhenAPeerWantsDevices() {
         let bluetooth = BluetoothMock()
         let peers = PeerMock()
         let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
@@ -77,12 +77,11 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .idle)
     }
 
-    func testInactiveTriggerRetainsDevicesWhileLidIsOpen() {
+    func testInactiveTriggerRetainsDevicesWhenNoPeerWantsThem() {
         let bluetooth = BluetoothMock()
         let peers = PeerMock()
-        let controller = HandoffController(
-            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] }, isLidOpen: { true }
-        )
+        peers.wantsDevices = false
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
 
         controller.ownershipChanged(isActive: true)
         peers.releaseCompletion?(true)
@@ -93,16 +92,16 @@ final class HandoffControllerTests: XCTestCase {
         XCTAssertTrue(bluetooth.released.isEmpty)
     }
 
-    func testOpenLidMacStillReleasesForPeerAndBeforeSleep() {
+    func testRetainedDevicesStillReleaseForPeerRequestAndBeforeSleepWhenWanted() {
         let bluetooth = BluetoothMock()
         let peers = PeerMock()
-        let controller = HandoffController(
-            bluetooth: bluetooth, peers: peers, addresses: { ["AA"] }, isLidOpen: { true }
-        )
+        peers.wantsDevices = false
+        let controller = HandoffController(bluetooth: bluetooth, peers: peers, addresses: { ["AA"] })
         var acknowledged = false
 
         controller.ownershipChanged(isActive: false)
         controller.releaseForPeer(["AA"], isOwnershipActive: false) { _ in }
+        peers.wantsDevices = true
         controller.prepareForSleep { acknowledged = true }
         bluetooth.releaseCompletion?(true)
 
@@ -394,6 +393,9 @@ private final class BluetoothMock: BluetoothControlling {
 private final class PeerMock: PeerCoordinating {
     var requested: [[String]] = []
     var releaseCompletion: ((Bool) -> Void)?
+    var wantsDevices = true
+
+    func peerWantsDevices(completion: @escaping (Bool) -> Void) { completion(wantsDevices) }
 
     func requestRelease(of addresses: [String], completion: @escaping (Bool) -> Void) {
         requested.append(addresses)
